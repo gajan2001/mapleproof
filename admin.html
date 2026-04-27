@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mapleproof — Admin</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="bg-decor"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M24 4 L28 14 L38 12 L33 22 L42 26 L33 30 L38 40 L28 38 L24 48 L20 38 L10 40 L15 30 L6 26 L15 22 L10 12 L20 14 Z" fill="url(#leafGradA)"/>
+        <defs><linearGradient id="leafGradA" x1="0" y1="0" x2="48" y2="48">
+          <stop offset="0%" stop-color="#d63a2e"/><stop offset="50%" stop-color="#f08c2a"/><stop offset="100%" stop-color="#2d8a3e"/>
+        </linearGradient></defs>
+      </svg>
+      <span class="brand-word">Mapleproof</span>
+      <span class="brand-tag">Admin</span>
+    </div>
+    <div class="topbar-meta"><a class="topbar-link" href="/">← Customer kiosk</a></div>
+  </header>
+
+  <!-- ─── LOGIN SCREEN ─── -->
+  <section id="login-section" class="container admin-login">
+    <div class="login-card">
+      <h2>Admin sign-in</h2>
+      <p>Enter the admin token shown in your server console.</p>
+      <input type="password" id="admin-token-input" placeholder="Paste your admin token" autocomplete="off">
+      <button id="login-btn" class="btn-primary">Sign in</button>
+      <p id="login-error" class="login-error" hidden></p>
+      <p class="hint">Find this token printed in the terminal where you ran <code>node server.js</code>, or in the file <code>data/.admin-token</code>.</p>
+    </div>
+  </section>
+
+  <!-- ─── ADMIN DASHBOARD ─── -->
+  <section id="admin-section" class="container admin" hidden>
+    <header class="admin-head">
+      <h2>Registered users</h2>
+      <button id="logout-btn" class="btn-ghost">Sign out</button>
+    </header>
+
+    <div id="stats-row" class="stats-row">
+      <div class="stat-card"><label>Total</label><strong id="stat-total">—</strong></div>
+      <div class="stat-card"><label>19+ tier</label><strong id="stat-19">—</strong></div>
+      <div class="stat-card"><label>25+ tier</label><strong id="stat-25">—</strong></div>
+      <div class="stat-card"><label>Expired ID</label><strong id="stat-expired">—</strong></div>
+      <div class="stat-card"><label>Total scans</label><strong id="stat-scans">—</strong></div>
+    </div>
+
+    <div class="admin-tools">
+      <input type="search" id="search-input" placeholder="Search by token…">
+      <button id="refresh-btn" class="btn-ghost">↻ Refresh</button>
+    </div>
+
+    <div id="users-grid" class="users-grid"></div>
+    <p id="users-empty" class="empty" hidden>No users registered yet.</p>
+  </section>
+
+  <!-- Confirm-delete dialog -->
+  <div id="confirm-overlay" class="confirm-overlay" hidden>
+    <div class="confirm-card">
+      <h3>Delete this user?</h3>
+      <p>This permanently removes the customer from the database. They'll need to re-register to use Mapleproof again.</p>
+      <p class="confirm-token" id="confirm-token">—</p>
+      <div class="confirm-actions">
+        <button id="cancel-delete" class="btn-ghost">Cancel</button>
+        <button id="confirm-delete" class="btn-danger">Delete user</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mapleproof — Verify your age</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M24 4 L28 14 L38 12 L33 22 L42 26 L33 30 L38 40 L28 38 L24 48 L20 38 L10 40 L15 30 L6 26 L15 22 L10 12 L20 14 Z" fill="url(#leafGrad)"/>
+        <defs><linearGradient id="leafGrad" x1="0" y1="0" x2="48" y2="48">
+          <stop offset="0%" stop-color="#c8362b"/><stop offset="50%" stop-color="#d97a23"/><stop offset="100%" stop-color="#1f7a3a"/>
+        </linearGradient></defs>
+      </svg>
+      <span class="brand-word">Mapleproof</span>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ─── PHASE 0: HOME ─── -->
+    <section id="phase-home" class="phase phase-home active">
+      <div class="hero">
+        <svg class="hero-mark" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M24 4 L28 14 L38 12 L33 22 L42 26 L33 30 L38 40 L28 38 L24 48 L20 38 L10 40 L15 30 L6 26 L15 22 L10 12 L20 14 Z" fill="url(#leafGrad2)"/>
+          <defs><linearGradient id="leafGrad2" x1="0" y1="0" x2="48" y2="48">
+            <stop offset="0%" stop-color="#c8362b"/><stop offset="50%" stop-color="#d97a23"/><stop offset="100%" stop-color="#1f7a3a"/>
+          </linearGradient></defs>
+        </svg>
+
+        <h1 class="hero-title">Verify your age.</h1>
+        <p class="hero-tag">One pass for every retailer.</p>
+
+        <button id="start-btn" class="btn-primary btn-lg">Get my pass &rarr;</button>
+
+        <div class="trust-row">
+          <div class="trust-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2 L4 6 V12 C4 17 7.5 21 12 22 C16.5 21 20 17 20 12 V6 Z"/>
+              <path d="M9 12 L11 14 L15 10"/>
+            </svg>
+            <span>Encrypted</span>
+          </div>
+          <div class="trust-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="4" y="10" width="16" height="11" rx="2"/>
+              <path d="M8 10 V7 a4 4 0 0 1 8 0 V10"/>
+            </svg>
+            <span>Stored locally</span>
+          </div>
+          <div class="trust-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="8" r="4"/>
+              <path d="M4 21 a8 8 0 0 1 16 0"/>
+            </svg>
+            <span>Private</span>
+          </div>
+        </div>
+
+        <div class="hero-steps">
+          <div class="step-mini"><span>1</span> Scan ID</div>
+          <div class="step-mini"><span>2</span> Selfie</div>
+          <div class="step-mini"><span>3</span> Done</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── PHASE 1: SCAN ID ─── -->
+    <section id="phase-scan" class="phase">
+      <header class="phase-head">
+        <h2>Scan your ID</h2>
+        <p>Hold the back of your driver's licence flat against the camera.</p>
+      </header>
+
+      <div class="camera-wrap">
+        <video id="barcode-video" autoplay playsinline muted></video>
+        <canvas id="barcode-proc" hidden></canvas>
+        <div class="scan-frame">
+          <div class="scan-line"></div>
+          <span class="corner tl"></span><span class="corner tr"></span>
+          <span class="corner bl"></span><span class="corner br"></span>
+        </div>
+        <div id="barcode-cam-label" class="cam-status">Looking for a barcode&hellip;</div>
+      </div>
+
+      <div id="barcode-status" class="scan-status">
+        <div id="barcode-spinner" class="spinner"></div>
+        <span id="barcode-status-text">Position the barcode in the frame.</span>
+      </div>
+
+      <div id="barcode-retry-row" class="phase-actions" style="display:none">
+        <button id="retry-barcode-btn" class="btn-primary">Try again</button>
+        <button id="back-home-btn" class="btn-ghost">&larr; Back</button>
+      </div>
+    </section>
+
+    <!-- ─── PHASE 2: SELFIE ─── -->
+    <section id="phase-selfie" class="phase">
+      <header class="phase-head">
+        <h2>Take a selfie</h2>
+        <p>This appears on your pass so retailers can match the photo to you.</p>
+      </header>
+
+      <div class="camera-wrap selfie-wrap">
+        <video id="selfie-video" autoplay playsinline muted></video>
+        <canvas id="selfie-canvas" hidden></canvas>
+      </div>
+
+      <div class="phase-actions">
+        <button id="capture-selfie-btn" class="btn-primary">Capture</button>
+        <button id="back-to-barcode-btn" class="btn-ghost">&larr; Back</button>
+      </div>
+    </section>
+
+    <!-- ─── PHASE 3: PASS ─── -->
+    <section id="phase-pass" class="phase">
+      <div id="saving-section" class="saving-section">
+        <div class="spinner big"></div>
+        <p>Saving your pass&hellip;</p>
+      </div>
+
+      <div id="pass-section" class="pass-section" style="display:none">
+        <div id="pass-card" class="pass-card">
+          <div class="pass-accent"></div>
+
+          <div class="pass-row top">
+            <div class="brand-small">
+              <svg class="brand-mark sm" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M24 4 L28 14 L38 12 L33 22 L42 26 L33 30 L38 40 L28 38 L24 48 L20 38 L10 40 L15 30 L6 26 L15 22 L10 12 L20 14 Z" fill="url(#brandGradPass)"/>
+                <defs><linearGradient id="brandGradPass" x1="0" y1="0" x2="48" y2="48">
+                  <stop offset="0%" stop-color="#c8362b"/><stop offset="50%" stop-color="#d97a23"/><stop offset="100%" stop-color="#1f7a3a"/>
+                </linearGradient></defs>
+              </svg>
+              <span>Mapleproof</span>
+            </div>
+          </div>
+
+          <div class="pass-verified">
+            <div class="pf-label tiny">Age verified</div>
+            <div class="pf-bigage" id="pass-age-badge">19+</div>
+            <div class="check-circle" aria-hidden="true">
+              <svg viewBox="0 0 32 32"><path d="M9 16 L14 21 L23 11" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <p class="pf-musthecheck"><strong>Must check ID.</strong></p>
+            <p class="pf-subline">Retailer makes the final decision.</p>
+          </div>
+
+          <div class="perforation"></div>
+
+          <div class="pass-barcode-area">
+            <svg id="barcode-svg" class="barcode-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+          </div>
+
+          <div class="perforation"></div>
+
+          <div class="pass-row bottom">
+            <span class="pf-label tiny" id="pass-token-label">ID &middot; &mdash;</span>
+            <span class="pf-thanks">Thank you!</span>
+          </div>
+
+          <div class="pass-meta-row">
+            <img id="pass-face-photo" class="pass-photo" src="" alt="Your registered photo">
+            <div class="pass-meta-grid">
+              <div>
+                <div class="pf-label">Status</div>
+                <div class="pf-value ok" id="pass-status-val">REGISTERED</div>
+              </div>
+              <div>
+                <div class="pf-label">Issued</div>
+                <div class="pf-value" id="pass-generated">&mdash;</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="duplicate-banner" class="duplicate-banner" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2 L4 6 V12 C4 17 7.5 21 12 22 C16.5 21 20 17 20 12 V6 Z"/>
+            <path d="M9 12 L11 14 L15 10"/>
+          </svg>
+          <span id="duplicate-text"></span>
+        </div>
+
+        <div id="save-error" class="pass-error" hidden></div>
+
+        <div class="phase-actions pass-actions">
+          <button id="download-pass-btn" class="btn-primary">&darr; Download pass</button>
+          <a class="btn-ghost" href="/retailer">Retailer scanner</a>
+          <button id="restart-btn" class="btn-ghost">&#x21bb; New registration</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    Mapleproof &middot; Privacy-first age verification
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mapleproof &mdash; Retailer</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M24 4 L28 14 L38 12 L33 22 L42 26 L33 30 L38 40 L28 38 L24 48 L20 38 L10 40 L15 30 L6 26 L15 22 L10 12 L20 14 Z" fill="url(#leafGradR)"/>
+        <defs><linearGradient id="leafGradR" x1="0" y1="0" x2="48" y2="48">
+          <stop offset="0%" stop-color="#c8362b"/><stop offset="50%" stop-color="#d97a23"/><stop offset="100%" stop-color="#1f7a3a"/>
+        </linearGradient></defs>
+      </svg>
+      <span class="brand-word">Mapleproof</span>
+      <span class="brand-tag">Retailer</span>
+    </div>
+    <a class="topbar-link" href="/">&larr; Customer</a>
+  </header>
+
+  <main class="container retailer">
+    <header class="phase-head">
+      <h2>Verify customer</h2>
+      <p>Type or scan the customer's barcode to verify age.</p>
+    </header>
+
+    <!-- Mode toggle: type vs camera -->
+    <div class="mode-toggle">
+      <button id="mode-manual" class="active" type="button">Type code</button>
+      <button id="mode-camera" type="button">Use camera</button>
+    </div>
+
+    <!-- ─── MANUAL MODE (default) ─── -->
+    <section id="section-manual" class="scan-section active">
+      <div class="manual-entry">
+        <label for="manual-token">Customer's barcode</label>
+        <div class="manual-row">
+          <input id="manual-token" type="text" autocomplete="off" inputmode="latin"
+                 placeholder="e.g. 4DKYK87VY5" maxlength="16" spellcheck="false">
+          <button id="manual-lookup" class="btn-primary" type="button">Verify</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── CAMERA MODE ─── -->
+    <section id="section-camera" class="scan-section">
+      <div id="camera-prompt" class="start-camera-prompt">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+        <p>Tap to start the camera and scan the customer's barcode.</p>
+        <button id="start-camera-btn" class="btn-primary" type="button">Start camera</button>
+      </div>
+
+      <div id="camera-active" hidden>
+        <div class="camera-wrap retailer-cam">
+          <video id="retailer-video" autoplay playsinline muted></video>
+          <div class="scan-frame retailer">
+            <div class="scan-line"></div>
+            <span class="corner tl"></span><span class="corner tr"></span>
+            <span class="corner bl"></span><span class="corner br"></span>
+          </div>
+        </div>
+        <div class="phase-actions">
+          <button id="stop-camera-btn" class="btn-ghost" type="button">Stop camera</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ─── RESULT MODAL ─── -->
+  <div id="result-overlay" class="result-overlay" hidden>
+    <div id="result-card" class="result-card">
+
+      <!-- Auto-clear countdown ring -->
+      <div class="countdown-wrap" aria-label="Result will clear automatically">
+        <svg class="countdown-ring" viewBox="0 0 44 44" aria-hidden="true">
+          <circle cx="22" cy="22" r="20" class="countdown-track"/>
+          <circle cx="22" cy="22" r="20" class="countdown-prog" id="countdown-prog"/>
+        </svg>
+        <span class="countdown-num" id="countdown-num">19</span>
+      </div>
+
+      <span class="result-tone-strip" id="res-tone-strip"></span>
+
+      <header class="result-head">
+        <h2 id="res-title">Verified</h2>
+        <p id="res-subtitle" class="result-subtitle">Pass found</p>
+      </header>
+
+      <div class="result-body">
+        <img id="res-photo" class="result-photo" src="" alt="Customer photo">
+
+        <div class="result-age-block">
+          <div class="pf-label tiny">Age tier</div>
+          <div class="result-age" id="res-age-badge">19+</div>
+        </div>
+
+        <div class="result-stats">
+          <div class="result-stat">
+            <label>Status</label>
+            <strong id="res-status">&mdash;</strong>
+          </div>
+          <div class="result-stat">
+            <label>Total scans</label>
+            <strong id="res-scans">&mdash;</strong>
+          </div>
+        </div>
+
+        <div class="result-must-check">
+          <strong>Must check ID.</strong>
+          <span>Cashier makes the final call.</span>
+        </div>
+
+        <div id="res-flags-wrap" class="result-flags" hidden>
+          <h4>Cashier alerts</h4>
+          <ul id="res-flags-list"></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="retailer.js"></script>
+</body>
+</html>
