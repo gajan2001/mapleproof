@@ -47,52 +47,60 @@ if (fs.existsSync(ADMIN_TOKEN_FILE)) {
 }
 
 // ── DATABASE ──────────────────────────────────────────────────────
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+let db;
+try {
+  db = new Database(DB_PATH);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS customers (
-    token           TEXT PRIMARY KEY,
-    id_hash         TEXT NOT NULL UNIQUE,
-    dob             TEXT,
-    dob_enc         BLOB,
-    expiry          TEXT NOT NULL,
-    name_enc        BLOB,
-    jurisdiction    TEXT,
-    face_enc        BLOB NOT NULL,
-    registered_at   TEXT NOT NULL,
-    updated_at      TEXT NOT NULL,
-    last_seen_at    TEXT,
-    scan_count      INTEGER NOT NULL DEFAULT 0
-  );
-  CREATE INDEX IF NOT EXISTS idx_customers_id_hash ON customers(id_hash);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS customers (
+      token           TEXT PRIMARY KEY,
+      id_hash         TEXT NOT NULL UNIQUE,
+      dob             TEXT,
+      dob_enc         BLOB,
+      expiry          TEXT NOT NULL,
+      name_enc        BLOB,
+      jurisdiction    TEXT,
+      face_enc        BLOB NOT NULL,
+      registered_at   TEXT NOT NULL,
+      updated_at      TEXT NOT NULL,
+      last_seen_at    TEXT,
+      scan_count      INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_customers_id_hash ON customers(id_hash);
 
-  CREATE TABLE IF NOT EXISTS scan_log (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    token        TEXT NOT NULL,
-    scanned_at   TEXT NOT NULL,
-    flags        TEXT,
-    FOREIGN KEY (token) REFERENCES customers(token) ON DELETE CASCADE
-  );
-  CREATE INDEX IF NOT EXISTS idx_scan_log_token ON scan_log(token);
-`);
+    CREATE TABLE IF NOT EXISTS scan_log (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      token        TEXT NOT NULL,
+      scanned_at   TEXT NOT NULL,
+      flags        TEXT,
+      FOREIGN KEY (token) REFERENCES customers(token) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_scan_log_token ON scan_log(token);
+  `);
 
-// Migration: encrypt any legacy plaintext DOBs
-(() => {
-  const cols = db.prepare("PRAGMA table_info(customers)").all();
-  if (!cols.some(c => c.name === 'dob_enc')) db.exec('ALTER TABLE customers ADD COLUMN dob_enc BLOB');
-  const legacy = db.prepare(`
-    SELECT token, dob FROM customers
-     WHERE (dob_enc IS NULL OR length(dob_enc)=0)
-       AND dob IS NOT NULL AND dob != ''
-  `).all();
-  if (legacy.length) {
-    const upd = db.prepare('UPDATE customers SET dob_enc = ?, dob = NULL WHERE token = ?');
-    db.transaction(rows => { for (const r of rows) upd.run(encrypt(r.dob), r.token); })(legacy);
-    console.log(`[mapleproof] migrated ${legacy.length} legacy DOB(s) to encrypted storage`);
-  }
-})();
+  // Migration: encrypt any legacy plaintext DOBs
+  (() => {
+    const cols = db.prepare("PRAGMA table_info(customers)").all();
+    if (!cols.some(c => c.name === 'dob_enc')) db.exec('ALTER TABLE customers ADD COLUMN dob_enc BLOB');
+    const legacy = db.prepare(`
+      SELECT token, dob FROM customers
+       WHERE (dob_enc IS NULL OR length(dob_enc)=0)
+         AND dob IS NOT NULL AND dob != ''
+    `).all();
+    if (legacy.length) {
+      const upd = db.prepare('UPDATE customers SET dob_enc = ?, dob = NULL WHERE token = ?');
+      db.transaction(rows => { for (const r of rows) upd.run(encrypt(r.dob), r.token); })(legacy);
+      console.log(`[mapleproof] migrated ${legacy.length} legacy DOB(s) to encrypted storage`);
+    }
+  })();
+  
+  console.log('[mapleproof] database initialized successfully');
+} catch (err) {
+  console.error('[mapleproof] FATAL: Database initialization failed:', err);
+  process.exit(1);
+}
 
 // ── CRYPTO ────────────────────────────────────────────────────────
 function encrypt(plain) {
@@ -415,24 +423,79 @@ const certPath = path.join(__dirname, 'cert.pem');
 const keyPath  = path.join(__dirname, 'key.pem');
 
 function banner(scheme) {
-  console.log(`\n  Mapleproof server running (${scheme.toUpperCase()})`);
+  // Detect if running on a platform (Render, Railway, etc.) that provides SSL
+  const isRender = process.env.RENDER === 'true';
+  const isRailway = process.env.RAILWAY_STATIC_URL;
+  const publicURL = process.env.RENDER_EXTERNAL_URL || 
+                    (isRailway ? `https://${process.env.RAILWAY_STATIC_URL}` : null);
+  
+  const baseURL = publicURL || `${scheme}://localhost:${PORT}`;
+  
+  console.log(`\n  Mapleproof server running${publicURL ? ' (platform mode)' : ` (${scheme.toUpperCase()})`}`);
   console.log(`  ─────────────────────────────────────`);
-  console.log(`  Customer kiosk : ${scheme}://localhost:${PORT}/`);
-  console.log(`  Retailer scan  : ${scheme}://localhost:${PORT}/retailer`);
-  console.log(`  Admin panel    : ${scheme}://localhost:${PORT}/admin`);
+  console.log(`  Customer kiosk : ${baseURL}/`);
+  console.log(`  Retailer scan  : ${baseURL}/retailer`);
+  console.log(`  Admin panel    : ${baseURL}/admin`);
   console.log(`  DB             : ${DB_PATH}`);
   console.log(`  Admin token    : ${ADMIN_TOKEN}`);
   console.log(`                   (saved in ${ADMIN_TOKEN_FILE})\n`);
-  if (scheme === 'https') console.log(`  ⚠️  Browser will warn about cert — click "Advanced" → "Proceed"\n`);
-  else console.log(`  ⚠️  Camera disabled on HTTP. Generate a cert and restart.\n`);
+  
+  if (publicURL) {
+    console.log(`  ✓ SSL provided by platform — camera will work!\n`);
+  } else if (scheme === 'https') {
+    console.log(`  ⚠️  Browser will warn about cert — click "Advanced" → "Proceed"\n`);
+  } else {
+    console.log(`  ⚠️  Camera disabled on HTTP. Generate a cert and restart.\n`);
+  }
 }
 
 if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-  https.createServer({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) }, app)
-    .listen(PORT, () => banner('https'));
+  const server = https.createServer({ 
+    cert: fs.readFileSync(certPath), 
+    key: fs.readFileSync(keyPath) 
+  }, app);
+  
+  server.listen(PORT, '0.0.0.0', () => {
+    banner('https');
+  });
+  
+  server.on('error', (err) => {
+    console.error('[server] HTTPS server error:', err);
+    process.exit(1);
+  });
 } else {
-  app.listen(PORT, () => banner('http'));
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    banner('http');
+  });
+  
+  server.on('error', (err) => {
+    console.error('[server] HTTP server error:', err);
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[server] Port ${PORT} is already in use. Exiting.`);
+    }
+    process.exit(1);
+  });
 }
 
-process.on('SIGINT',  () => { console.log('\n  shutting down…'); db.close(); process.exit(0); });
-process.on('SIGTERM', () => { db.close(); process.exit(0); });
+// Keep the process alive
+process.on('SIGINT',  () => { 
+  console.log('\n[server] Received SIGINT, shutting down gracefully…'); 
+  db.close(); 
+  process.exit(0); 
+});
+
+process.on('SIGTERM', () => { 
+  console.log('\n[server] Received SIGTERM, shutting down gracefully…'); 
+  db.close(); 
+  process.exit(0); 
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[server] Uncaught exception:', err);
+  db.close();
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[server] Unhandled rejection at:', promise, 'reason:', reason);
+});
