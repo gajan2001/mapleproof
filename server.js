@@ -449,7 +449,9 @@ function banner(scheme) {
   }
 }
 
-if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+const isRender = process.env.RENDER === 'true';
+
+if (!isRender && fs.existsSync(certPath) && fs.existsSync(keyPath)) {
   const server = https.createServer({ 
     cert: fs.readFileSync(certPath), 
     key: fs.readFileSync(keyPath) 
