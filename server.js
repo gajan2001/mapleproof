@@ -455,7 +455,11 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
     key: fs.readFileSync(keyPath) 
   }, app);
   
-  server.listen(PORT, '0.0.0.0', () => {
+  server.listen(PORT, '0.0.0.0');
+  
+  server.on('listening', () => {
+    const addr = server.address();
+    console.log(`[server] HTTPS server listening on ${addr.address}:${addr.port}`);
     banner('https');
   });
   
@@ -468,15 +472,9 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
   
   server.on('listening', () => {
     const addr = server.address();
-    console.log(`[server] Successfully bound to port ${addr.port}`);
+    console.log(`[server] HTTP server listening on ${addr.address}:${addr.port}`);
     banner('http');
   });
-  
-  server.on('error', (err) => {
-    console.error('[server] Server error:', err);
-    process.exit(1);
-  });
-}
   
   server.on('error', (err) => {
     console.error('[server] HTTP server error:', err);
@@ -485,34 +483,24 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
     }
     process.exit(1);
   });
-  
-  // Keep server alive
-  server.on('listening', () => {
-    console.log('[server] Server confirmed listening');
-    
-    // Heartbeat every 30 seconds to prove server is alive
-    setInterval(() => {
-      console.log('[server] Heartbeat - server is running');
-    }, 30000);
-  });
 }
 
-// Keep the process alive
+// Process lifecycle handlers
 process.on('SIGINT',  () => { 
   console.log('\n[server] Received SIGINT, shutting down gracefully…'); 
-  db.close(); 
+  if (db) db.close(); 
   process.exit(0); 
 });
 
 process.on('SIGTERM', () => { 
   console.log('\n[server] Received SIGTERM, shutting down gracefully…'); 
-  db.close(); 
+  if (db) db.close(); 
   process.exit(0); 
 });
 
 process.on('uncaughtException', (err) => {
   console.error('[server] Uncaught exception:', err);
-  db.close();
+  if (db) db.close();
   process.exit(1);
 });
 
