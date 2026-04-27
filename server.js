@@ -415,16 +415,30 @@ const certPath = path.join(__dirname, 'cert.pem');
 const keyPath  = path.join(__dirname, 'key.pem');
 
 function banner(scheme) {
-  console.log(`\n  Mapleproof server running (${scheme.toUpperCase()})`);
+  // Detect if running on a platform (Render, Railway, etc.) that provides SSL
+  const isRender = process.env.RENDER === 'true';
+  const isRailway = process.env.RAILWAY_STATIC_URL;
+  const publicURL = process.env.RENDER_EXTERNAL_URL || 
+                    (isRailway ? `https://${process.env.RAILWAY_STATIC_URL}` : null);
+  
+  const baseURL = publicURL || `${scheme}://localhost:${PORT}`;
+  
+  console.log(`\n  Mapleproof server running${publicURL ? ' (platform mode)' : ` (${scheme.toUpperCase()})`}`);
   console.log(`  ─────────────────────────────────────`);
-  console.log(`  Customer kiosk : ${scheme}://localhost:${PORT}/`);
-  console.log(`  Retailer scan  : ${scheme}://localhost:${PORT}/retailer`);
-  console.log(`  Admin panel    : ${scheme}://localhost:${PORT}/admin`);
+  console.log(`  Customer kiosk : ${baseURL}/`);
+  console.log(`  Retailer scan  : ${baseURL}/retailer`);
+  console.log(`  Admin panel    : ${baseURL}/admin`);
   console.log(`  DB             : ${DB_PATH}`);
   console.log(`  Admin token    : ${ADMIN_TOKEN}`);
   console.log(`                   (saved in ${ADMIN_TOKEN_FILE})\n`);
-  if (scheme === 'https') console.log(`  ⚠️  Browser will warn about cert — click "Advanced" → "Proceed"\n`);
-  else console.log(`  ⚠️  Camera disabled on HTTP. Generate a cert and restart.\n`);
+  
+  if (publicURL) {
+    console.log(`  ✓ SSL provided by platform — camera will work!\n`);
+  } else if (scheme === 'https') {
+    console.log(`  ⚠️  Browser will warn about cert — click "Advanced" → "Proceed"\n`);
+  } else {
+    console.log(`  ⚠️  Camera disabled on HTTP. Generate a cert and restart.\n`);
+  }
 }
 
 if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
