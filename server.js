@@ -464,11 +464,19 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
     process.exit(1);
   });
 } else {
-  const server = app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0');
+  
+  server.on('listening', () => {
+    const addr = server.address();
+    console.log(`[server] Successfully bound to port ${addr.port}`);
     banner('http');
-    console.log(`[server] Listening on http://0.0.0.0:${PORT}`);
-    console.log('[server] Server is ready to accept connections\n');
   });
+  
+  server.on('error', (err) => {
+    console.error('[server] Server error:', err);
+    process.exit(1);
+  });
+}
   
   server.on('error', (err) => {
     console.error('[server] HTTP server error:', err);
