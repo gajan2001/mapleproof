@@ -466,6 +466,8 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
 } else {
   const server = app.listen(PORT, '0.0.0.0', () => {
     banner('http');
+    console.log(`[server] Listening on http://0.0.0.0:${PORT}`);
+    console.log('[server] Server is ready to accept connections\n');
   });
   
   server.on('error', (err) => {
@@ -474,6 +476,16 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
       console.error(`[server] Port ${PORT} is already in use. Exiting.`);
     }
     process.exit(1);
+  });
+  
+  // Keep server alive
+  server.on('listening', () => {
+    console.log('[server] Server confirmed listening');
+    
+    // Heartbeat every 30 seconds to prove server is alive
+    setInterval(() => {
+      console.log('[server] Heartbeat - server is running');
+    }, 30000);
   });
 }
 
