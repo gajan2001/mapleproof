@@ -4,18 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Mapleproof — Verify your age</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="apple-touch-icon" href="favicon.png">
+  <meta name="theme-color" content="#1f6f48">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
   <header class="topbar">
     <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <path d="M24 4 L28 14 L38 12 L33 22 L42 26 L33 30 L38 40 L28 38 L24 48 L20 38 L10 40 L15 30 L6 26 L15 22 L10 12 L20 14 Z" fill="url(#leafGrad)"/>
-        <defs><linearGradient id="leafGrad" x1="0" y1="0" x2="48" y2="48">
-          <stop offset="0%" stop-color="#c8362b"/><stop offset="50%" stop-color="#d97a23"/><stop offset="100%" stop-color="#1f7a3a"/>
-        </linearGradient></defs>
-      </svg>
+      <img class="brand-mark-img" src="favicon.png" alt="" width="36" height="36">
       <span class="brand-word">Mapleproof</span>
     </div>
   </header>
@@ -25,12 +23,7 @@
     <!-- ─── PHASE 0: HOME ─── -->
     <section id="phase-home" class="phase phase-home active">
       <div class="hero">
-        <svg class="hero-mark" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <path d="M24 4 L28 14 L38 12 L33 22 L42 26 L33 30 L38 40 L28 38 L24 48 L20 38 L10 40 L15 30 L6 26 L15 22 L10 12 L20 14 Z" fill="url(#leafGrad2)"/>
-          <defs><linearGradient id="leafGrad2" x1="0" y1="0" x2="48" y2="48">
-            <stop offset="0%" stop-color="#c8362b"/><stop offset="50%" stop-color="#d97a23"/><stop offset="100%" stop-color="#1f7a3a"/>
-          </linearGradient></defs>
-        </svg>
+        <img class="hero-mark-img" src="favicon.png" alt="" width="84" height="84">
 
         <h1 class="hero-title">Verify your age.</h1>
         <p class="hero-tag">One pass for every retailer.</p>
@@ -73,29 +66,77 @@
     <section id="phase-scan" class="phase">
       <header class="phase-head">
         <h2>Scan your ID</h2>
-        <p>Hold the back of your driver's licence flat against the camera.</p>
+        <p>Use your camera, or upload a clear photo of your licence.</p>
       </header>
 
-      <div class="camera-wrap">
-        <video id="barcode-video" autoplay playsinline muted></video>
-        <canvas id="barcode-proc" hidden></canvas>
-        <div class="scan-frame">
-          <div class="scan-line"></div>
-          <span class="corner tl"></span><span class="corner tr"></span>
-          <span class="corner bl"></span><span class="corner br"></span>
+      <!-- Mode toggle: live camera vs upload -->
+      <div class="mode-toggle">
+        <button id="mode-upload-btn" class="active" type="button">Upload photo (faster)</button>
+        <button id="mode-camera-btn" type="button">Live camera</button>
+      </div>
+
+      <!-- ── UPLOAD MODE (default — front + back) ─── -->
+      <section id="upload-mode" class="scan-section active">
+        <div class="upload-grid">
+          <label class="upload-card" for="id-front-input">
+            <div class="upload-thumb" id="id-front-thumb">
+              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="10" width="36" height="28" rx="3"/>
+                <circle cx="16" cy="22" r="4"/>
+                <path d="M24 20 L36 20 M24 26 L34 26"/>
+              </svg>
+              <span class="upload-label">Front of ID</span>
+              <span class="upload-hint">Tap to choose photo</span>
+            </div>
+            <input type="file" id="id-front-input" accept="image/*" capture="environment" hidden>
+          </label>
+
+          <label class="upload-card" for="id-back-input">
+            <div class="upload-thumb" id="id-back-thumb">
+              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="10" width="36" height="28" rx="3"/>
+                <path d="M10 30 H38 M10 26 H38 M10 22 H38 M10 18 H38"/>
+              </svg>
+              <span class="upload-label">Back of ID</span>
+              <span class="upload-hint">Has the barcode</span>
+            </div>
+            <input type="file" id="id-back-input" accept="image/*" capture="environment" hidden>
+          </label>
         </div>
-        <div id="barcode-cam-label" class="cam-status">Looking for a barcode&hellip;</div>
-      </div>
 
-      <div id="barcode-status" class="scan-status">
-        <div id="barcode-spinner" class="spinner"></div>
-        <span id="barcode-status-text">Position the barcode in the frame.</span>
-      </div>
+        <div id="upload-status" class="scan-status">
+          <span id="upload-status-text">Add both sides of your ID to continue.</span>
+        </div>
 
-      <div id="barcode-retry-row" class="phase-actions" style="display:none">
-        <button id="retry-barcode-btn" class="btn-primary">Try again</button>
-        <button id="back-home-btn" class="btn-ghost">&larr; Back</button>
-      </div>
+        <div class="phase-actions">
+          <button id="upload-process-btn" class="btn-primary" disabled>Process ID</button>
+          <button id="back-home-btn-2" class="btn-ghost">&larr; Back</button>
+        </div>
+      </section>
+
+      <!-- ── CAMERA MODE (live PDF417 scan, opt-in) ─── -->
+      <section id="camera-mode" class="scan-section">
+        <div class="camera-wrap">
+          <video id="barcode-video" autoplay playsinline muted></video>
+          <canvas id="barcode-proc" hidden></canvas>
+          <div class="scan-frame">
+            <div class="scan-line"></div>
+            <span class="corner tl"></span><span class="corner tr"></span>
+            <span class="corner bl"></span><span class="corner br"></span>
+          </div>
+          <div id="barcode-cam-label" class="cam-status">Looking for a barcode&hellip;</div>
+        </div>
+
+        <div id="barcode-status" class="scan-status">
+          <div id="barcode-spinner" class="spinner"></div>
+          <span id="barcode-status-text">Position the barcode in the frame.</span>
+        </div>
+
+        <div id="barcode-retry-row" class="phase-actions" style="display:none">
+          <button id="retry-barcode-btn" class="btn-primary">Try again</button>
+          <button id="back-home-btn" class="btn-ghost">&larr; Back</button>
+        </div>
+      </section>
     </section>
 
     <!-- ─── PHASE 2: SELFIE ─── -->
@@ -129,12 +170,7 @@
 
           <div class="pass-row top">
             <div class="brand-small">
-              <svg class="brand-mark sm" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <path d="M24 4 L28 14 L38 12 L33 22 L42 26 L33 30 L38 40 L28 38 L24 48 L20 38 L10 40 L15 30 L6 26 L15 22 L10 12 L20 14 Z" fill="url(#brandGradPass)"/>
-                <defs><linearGradient id="brandGradPass" x1="0" y1="0" x2="48" y2="48">
-                  <stop offset="0%" stop-color="#c8362b"/><stop offset="50%" stop-color="#d97a23"/><stop offset="100%" stop-color="#1f7a3a"/>
-                </linearGradient></defs>
-              </svg>
+              <img class="brand-mark-img sm" src="favicon.png" alt="" width="22" height="22">
               <span>Mapleproof</span>
             </div>
           </div>
@@ -170,6 +206,10 @@
                 <div class="pf-value ok" id="pass-status-val">REGISTERED</div>
               </div>
               <div>
+                <div class="pf-label">Photo Match</div>
+                <div class="pf-value" id="pass-match-val">&mdash;</div>
+              </div>
+              <div>
                 <div class="pf-label">Issued</div>
                 <div class="pf-value" id="pass-generated">&mdash;</div>
               </div>
@@ -201,6 +241,9 @@
     Mapleproof &middot; Privacy-first age verification
   </footer>
 
+  <!-- Browser-side libraries (no server cost): face matching + barcode reading -->
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -55,18 +55,22 @@ try {
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS customers (
-      token           TEXT PRIMARY KEY,
-      id_hash         TEXT NOT NULL UNIQUE,
-      dob             TEXT,
-      dob_enc         BLOB,
-      expiry          TEXT NOT NULL,
-      name_enc        BLOB,
-      jurisdiction    TEXT,
-      face_enc        BLOB NOT NULL,
-      registered_at   TEXT NOT NULL,
-      updated_at      TEXT NOT NULL,
-      last_seen_at    TEXT,
-      scan_count      INTEGER NOT NULL DEFAULT 0
+      token             TEXT PRIMARY KEY,
+      id_hash           TEXT NOT NULL UNIQUE,
+      dob               TEXT,
+      dob_enc           BLOB,
+      expiry            TEXT NOT NULL,
+      name_enc          BLOB,
+      jurisdiction      TEXT,
+      face_enc          BLOB NOT NULL,
+      id_front_enc      BLOB,
+      id_back_enc       BLOB,
+      face_match_score  REAL,
+      face_match_at     TEXT,
+      registered_at     TEXT NOT NULL,
+      updated_at        TEXT NOT NULL,
+      last_seen_at      TEXT,
+      scan_count        INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_customers_id_hash ON customers(id_hash);
 
@@ -80,10 +84,29 @@ try {
     CREATE INDEX IF NOT EXISTS idx_scan_log_token ON scan_log(token);
   `);
 
-  // Migration: encrypt any legacy plaintext DOBs
+  // Migration: encrypt any legacy plaintext DOBs + add new face-match columns
   (() => {
     const cols = db.prepare("PRAGMA table_info(customers)").all();
-    if (!cols.some(c => c.name === 'dob_enc')) db.exec('ALTER TABLE customers ADD COLUMN dob_enc BLOB');
+    const colNames = cols.map(c => c.name);
+
+    if (!colNames.includes('dob_enc')) db.exec('ALTER TABLE customers ADD COLUMN dob_enc BLOB');
+    if (!colNames.includes('id_front_enc')) {
+      db.exec('ALTER TABLE customers ADD COLUMN id_front_enc BLOB');
+      console.log('[mapleproof] migrated: added id_front_enc column');
+    }
+    if (!colNames.includes('id_back_enc')) {
+      db.exec('ALTER TABLE customers ADD COLUMN id_back_enc BLOB');
+      console.log('[mapleproof] migrated: added id_back_enc column');
+    }
+    if (!colNames.includes('face_match_score')) {
+      db.exec('ALTER TABLE customers ADD COLUMN face_match_score REAL');
+      console.log('[mapleproof] migrated: added face_match_score column');
+    }
+    if (!colNames.includes('face_match_at')) {
+      db.exec('ALTER TABLE customers ADD COLUMN face_match_at TEXT');
+      console.log('[mapleproof] migrated: added face_match_at column');
+    }
+
     const legacy = db.prepare(`
       SELECT token, dob FROM customers
        WHERE (dob_enc IS NULL OR length(dob_enc)=0)
@@ -178,7 +201,7 @@ function daysToNextTier(dob) {
 // ── EXPRESS ───────────────────────────────────────────────────────
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '8mb' }));
+app.use(express.json({ limit: '24mb' }));
 
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -229,15 +252,39 @@ app.post('/api/register', (req, res) => {
     return res.status(429).json({ ok: false, error: 'Too many registrations. Try again shortly.' });
 
   try {
-    const { idNumber, dob, expiry, name, jurisdiction, faceImageData } = req.body || {};
+    const {
+      idNumber, dob, expiry, name, jurisdiction,
+      faceImageData,
+      idFrontImage,    // optional: data URL of front of ID
+      idBackImage,     // optional: data URL of back of ID
+      faceMatchScore   // optional: 0..1 similarity score from browser-side face-api.js
+    } = req.body || {};
+
     if (!idNumber || !dob || !expiry || !faceImageData)
       return res.status(400).json({ ok: false, error: 'Missing required fields.' });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dob))    return res.status(400).json({ ok: false, error: 'DOB must be YYYY-MM-DD.' });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry)) return res.status(400).json({ ok: false, error: 'Expiry must be YYYY-MM-DD.' });
     if (typeof faceImageData !== 'string' || !faceImageData.startsWith('data:image/'))
       return res.status(400).json({ ok: false, error: 'Face image must be a data: URL.' });
-    if (faceImageData.length > 6_000_000)
+    if (faceImageData.length > 8_000_000)
       return res.status(413).json({ ok: false, error: 'Face image too large.' });
+
+    // Validate optional ID images
+    if (idFrontImage && (typeof idFrontImage !== 'string' || !idFrontImage.startsWith('data:image/')))
+      return res.status(400).json({ ok: false, error: 'idFrontImage must be a data: URL.' });
+    if (idBackImage && (typeof idBackImage !== 'string' || !idBackImage.startsWith('data:image/')))
+      return res.status(400).json({ ok: false, error: 'idBackImage must be a data: URL.' });
+    if (idFrontImage && idFrontImage.length > 8_000_000)
+      return res.status(413).json({ ok: false, error: 'ID front image too large.' });
+    if (idBackImage && idBackImage.length > 8_000_000)
+      return res.status(413).json({ ok: false, error: 'ID back image too large.' });
+
+    // Validate face match score
+    let matchScore = null;
+    if (faceMatchScore !== undefined && faceMatchScore !== null) {
+      const n = Number(faceMatchScore);
+      if (Number.isFinite(n) && n >= 0 && n <= 1) matchScore = n;
+    }
 
     const age = calculateAge(dob);
     if (age < 18) return res.status(403).json({ ok: false, error: `Customer is ${age} — under the minimum tier.` });
@@ -256,10 +303,16 @@ app.post('/api/register', (req, res) => {
       db.prepare(`
         UPDATE customers
            SET dob_enc = ?, expiry = ?, name_enc = ?, jurisdiction = ?,
-               face_enc = ?, updated_at = ?, dob = NULL
+               face_enc = ?, id_front_enc = ?, id_back_enc = ?,
+               face_match_score = ?, face_match_at = ?,
+               updated_at = ?, dob = NULL
          WHERE token = ?
       `).run(encrypt(dob), expiry, encrypt(name || ''), jurisdiction || '',
-             encrypt(faceImageData), now, token);
+             encrypt(faceImageData),
+             idFrontImage ? encrypt(idFrontImage) : null,
+             idBackImage  ? encrypt(idBackImage)  : null,
+             matchScore, matchScore !== null ? now : null,
+             now, token);
     } else {
       do { token = generateToken(); }
       while (db.prepare('SELECT 1 FROM customers WHERE token = ?').get(token));
@@ -267,10 +320,16 @@ app.post('/api/register', (req, res) => {
       db.prepare(`
         INSERT INTO customers
           (token, id_hash, dob_enc, expiry, name_enc, jurisdiction,
-           face_enc, registered_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           face_enc, id_front_enc, id_back_enc,
+           face_match_score, face_match_at,
+           registered_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(token, idHash, encrypt(dob), expiry, encrypt(name || ''),
-             jurisdiction || '', encrypt(faceImageData), now, now);
+             jurisdiction || '', encrypt(faceImageData),
+             idFrontImage ? encrypt(idFrontImage) : null,
+             idBackImage  ? encrypt(idBackImage)  : null,
+             matchScore, matchScore !== null ? now : null,
+             now, now);
     }
 
     return res.json({
@@ -283,12 +342,13 @@ app.post('/api/register', (req, res) => {
         ? `You're already registered — your existing pass has been refreshed. One ID, one barcode.`
         : null,
       publicRecord: {
-        ageBadge: ageBadge(age),
-        verified: age >= LEGAL_AGE,
-        jurisdiction: jurisdiction || '',
+        ageBadge:          ageBadge(age),
+        verified:          age >= LEGAL_AGE,
+        jurisdiction:      jurisdiction || '',
         expiry,
-        expiryStatus: exp.state,
-        registeredAt: existing ? existing.registered_at : now
+        expiryStatus:      exp.state,
+        faceMatchScore:    matchScore,
+        registeredAt:      existing ? existing.registered_at : now
       }
     });
   } catch (err) {
@@ -309,6 +369,7 @@ app.get('/api/pass/:token', (req, res) => {
 
     const row = db.prepare(`
       SELECT token, dob, dob_enc, expiry, jurisdiction, face_enc,
+             face_match_score, face_match_at,
              registered_at, updated_at, last_seen_at, scan_count
         FROM customers WHERE token = ?
     `).get(token);
@@ -320,12 +381,25 @@ app.get('/api/pass/:token', (req, res) => {
     const age = calculateAge(dob);
     const exp = expiryStatus(row.expiry);
 
+    // face-api.js euclidean distance: 0 = identical, ~0.6 = different person.
+    // We store similarity (1 - distance), so 1 = identical, 0.4 = different.
+    // Threshold: 0.55+ = strong match, 0.4-0.55 = weak, <0.4 = fail.
+    const matchScore = row.face_match_score;
+    let matchStatus = 'unknown';
+    if (matchScore !== null && matchScore !== undefined) {
+      if (matchScore >= 0.55) matchStatus = 'strong';
+      else if (matchScore >= 0.4) matchStatus = 'weak';
+      else matchStatus = 'fail';
+    }
+
     const flags = [];
     if (age < LEGAL_AGE) flags.push('UNDER_LEGAL_AGE');
     if (age >= 19 && age < 21) flags.push('CLOSE_TO_LIMIT');
     if (exp.state === 'expired') flags.push('ID_EXPIRED');
     if (exp.state === 'expiring_soon') flags.push('ID_EXPIRING_SOON');
     if (Date.now() - new Date(row.registered_at).getTime() < 5 * 60_000) flags.push('JUST_REGISTERED');
+    if (matchStatus === 'fail') flags.push('PHOTO_MATCH_FAIL');
+    else if (matchStatus === 'weak') flags.push('PHOTO_MATCH_WEAK');
 
     const now = new Date().toISOString();
     db.prepare('UPDATE customers SET last_seen_at = ?, scan_count = scan_count + 1 WHERE token = ?').run(now, token);
@@ -334,16 +408,18 @@ app.get('/api/pass/:token', (req, res) => {
     return res.json({
       ok: true,
       publicRecord: {
-        ageBadge:     ageBadge(age),
-        verified:     age >= LEGAL_AGE && exp.state !== 'expired',
-        expiry:       row.expiry,
-        expiryStatus: exp.state,
-        expiryDays:   exp.days,
-        jurisdiction: row.jurisdiction || '',
-        faceImage:    decrypt(row.face_enc),
-        registeredAt: row.registered_at,
-        lastSeenAt:   row.last_seen_at,
-        scanCount:    row.scan_count + 1,
+        ageBadge:        ageBadge(age),
+        verified:        age >= LEGAL_AGE && exp.state !== 'expired' && matchStatus !== 'fail',
+        expiry:          row.expiry,
+        expiryStatus:    exp.state,
+        expiryDays:      exp.days,
+        jurisdiction:    row.jurisdiction || '',
+        faceImage:       decrypt(row.face_enc),
+        faceMatchScore:  matchScore,
+        faceMatchStatus: matchStatus,
+        registeredAt:    row.registered_at,
+        lastSeenAt:      row.last_seen_at,
+        scanCount:       row.scan_count + 1,
         flags
       }
     });

@@ -43,7 +43,9 @@ const CODE128_PATTERNS = [
 
 function renderCode128(svgEl, text, opts = {}) {
   const o = Object.assign({
-    barWidth: 2.4, height: 80, margin: 10,
+    barWidth: 3.4,        // wider bars → reliable scan from phone screens (was 2.4)
+    height: 96,           // taller bars
+    margin: 18,           // wider quiet zone — REQUIRED for ZXing detection
     showText: true, fontSize: 14, textMargin: 6,
     background: '#ffffff', lineColor: '#000000',
     fontFamily: 'JetBrains Mono, monospace'
@@ -121,6 +123,9 @@ function renderCode128(svgEl, text, opts = {}) {
 // ── STATE ──────────────────────────────────────────────────────────
 const state = {
   faceImageData: '',
+  idFrontImage:  '',
+  idBackImage:   '',
+  faceMatchScore: null,
   token:         '',
   parsed: { idNumber: '', dob: '', expiry: '', name: '', jurisdiction: '' },
   serverPublicRecord: null
@@ -164,24 +169,252 @@ function showPhase(n) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// Wire up the home page CTA + back button
+// Wire up the home page CTA + back button + mode toggle + ID upload handlers
 document.addEventListener('DOMContentLoaded', () => {
   const startBtn = document.getElementById('start-btn');
   const backBtn  = document.getElementById('back-home-btn');
+  const backBtn2 = document.getElementById('back-home-btn-2');
+
   if (startBtn) {
     startBtn.addEventListener('click', () => {
       showPhase(1);
-      startBarcodeCamera();
+      // Upload mode is the default — no camera until user opts in
+      // (faster + works without HTTPS-camera permissions issues)
     });
   }
-  if (backBtn) {
-    backBtn.addEventListener('click', () => {
+  const goHome = () => {
+    scanActive = false;
+    stopStream(barcodeStream);
+    showPhase(0);
+  };
+  if (backBtn)  backBtn.addEventListener('click', goHome);
+  if (backBtn2) backBtn2.addEventListener('click', goHome);
+
+  // ── MODE TOGGLE: upload (default) ↔ live camera ──
+  const modeUploadBtn = document.getElementById('mode-upload-btn');
+  const modeCameraBtn = document.getElementById('mode-camera-btn');
+  const uploadMode    = document.getElementById('upload-mode');
+  const cameraMode    = document.getElementById('camera-mode');
+
+  function setScanMode(mode) {
+    if (mode === 'camera') {
+      modeCameraBtn?.classList.add('active');
+      modeUploadBtn?.classList.remove('active');
+      cameraMode?.classList.add('active');
+      uploadMode?.classList.remove('active');
+      startBarcodeCamera();
+    } else {
+      modeUploadBtn?.classList.add('active');
+      modeCameraBtn?.classList.remove('active');
+      uploadMode?.classList.add('active');
+      cameraMode?.classList.remove('active');
+      // Stop any running camera
       scanActive = false;
       stopStream(barcodeStream);
-      showPhase(0);
-    });
+    }
   }
+  modeUploadBtn?.addEventListener('click', () => setScanMode('upload'));
+  modeCameraBtn?.addEventListener('click', () => setScanMode('camera'));
+
+  // ── ID UPLOAD: front + back file inputs ──
+  const idFrontInput  = document.getElementById('id-front-input');
+  const idBackInput   = document.getElementById('id-back-input');
+  const idFrontThumb  = document.getElementById('id-front-thumb');
+  const idBackThumb   = document.getElementById('id-back-thumb');
+  const uploadStatus  = document.getElementById('upload-status-text');
+  const processBtn    = document.getElementById('upload-process-btn');
+
+  function refreshProcessBtn() {
+    const ready = !!state.idFrontImage && !!state.idBackImage;
+    if (processBtn) processBtn.disabled = !ready;
+    if (uploadStatus) {
+      uploadStatus.textContent = ready
+        ? 'Ready to process. Tap "Process ID".'
+        : (state.idFrontImage ? 'Now add the back of your ID.'
+        :  state.idBackImage  ? 'Now add the front of your ID.'
+        :  'Add both sides of your ID to continue.');
+    }
+  }
+
+  async function handleIdImageFile(file, side) {
+    if (!file) return;
+    // Resize/compress so we don't blow past the 24mb server limit
+    const dataUrl = await resizeImageFile(file, 1600, 0.85);
+    if (side === 'front') {
+      state.idFrontImage = dataUrl;
+      if (idFrontThumb) {
+        idFrontThumb.classList.add('has-image');
+        idFrontThumb.style.backgroundImage = `url('${dataUrl}')`;
+        idFrontThumb.parentElement.classList.add('has-image');
+      }
+    } else {
+      state.idBackImage = dataUrl;
+      if (idBackThumb) {
+        idBackThumb.classList.add('has-image');
+        idBackThumb.style.backgroundImage = `url('${dataUrl}')`;
+        idBackThumb.parentElement.classList.add('has-image');
+      }
+    }
+    refreshProcessBtn();
+  }
+
+  idFrontInput?.addEventListener('change', e => handleIdImageFile(e.target.files[0], 'front'));
+  idBackInput?.addEventListener('change', e => handleIdImageFile(e.target.files[0], 'back'));
+
+  processBtn?.addEventListener('click', async () => {
+    if (!state.idFrontImage || !state.idBackImage) return;
+    processBtn.disabled = true;
+    if (uploadStatus) uploadStatus.textContent = 'Reading barcode from back of ID…';
+
+    try {
+      const parsed = await decodeBarcodeFromDataUrl(state.idBackImage);
+      // Validate age + expiry as we do for camera mode
+      const age = computeAge(parsed.dob);
+      if (age !== null && age < 18) {
+        if (uploadStatus) uploadStatus.textContent = `Customer is ${age} — under the minimum age tier.`;
+        processBtn.disabled = false;
+        return;
+      }
+      if (parsed.expiry) {
+        const exp = new Date(`${parsed.expiry}T00:00:00`);
+        if (!Number.isNaN(exp.getTime()) && exp.getTime() < Date.now()) {
+          if (uploadStatus) uploadStatus.textContent = 'This ID is expired. Please use a valid ID.';
+          processBtn.disabled = false;
+          return;
+        }
+      }
+      state.parsed = parsed;
+      if (uploadStatus) uploadStatus.textContent = '✓ ID barcode read. Moving to selfie…';
+      setTimeout(() => { showPhase(2); startSelfieCamera(); }, 600);
+    } catch (err) {
+      console.error('[upload] barcode decode failed:', err);
+      if (uploadStatus) uploadStatus.textContent =
+        'Could not read the barcode on the back of your ID. Try a clearer, well-lit, focused photo — or use the live camera mode.';
+      processBtn.disabled = false;
+    }
+  });
+
+  // Pre-load face-api models in the background — parallel to the user's flow
+  loadFaceApiModels();
 });
+
+// ── Resize a File to a max dimension and return a JPEG data URL ──
+function resizeImageFile(file, maxDim = 1600, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const scale = Math.min(maxDim / width, maxDim / height);
+          width  = Math.round(width  * scale);
+          height = Math.round(height * scale);
+        }
+        const c = document.createElement('canvas');
+        c.width = width; c.height = height;
+        c.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(c.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ── Decode a PDF417 barcode from a data URL using ZXing ──
+async function decodeBarcodeFromDataUrl(dataUrl) {
+  const img = new Image();
+  await new Promise((res, rej) => {
+    img.onload = res; img.onerror = rej; img.src = dataUrl;
+  });
+  const baseCanvas = document.createElement('canvas');
+  baseCanvas.width = img.width; baseCanvas.height = img.height;
+  baseCanvas.getContext('2d').drawImage(img, 0, 0);
+  const result = await tryDecodeCanvasVariants(baseCanvas);
+  return parseBarcodeText(result.text);
+}
+
+// ── Helper used by upload-mode age check (alias of calculateAge for readability) ──
+function computeAge(dob) { return calculateAge(dob); }
+
+// ─────────────────────────────────────────────────────────────────
+//  FACE MATCHING — browser-side via face-api.js (FREE)
+//  Loads from CDN. Models are ~6MB total, cached after first load.
+// ─────────────────────────────────────────────────────────────────
+const FACE_MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
+let faceApiReady = false;
+let faceApiLoading = null;
+
+function loadFaceApiModels() {
+  if (faceApiReady) return Promise.resolve();
+  if (faceApiLoading) return faceApiLoading;
+  if (typeof faceapi === 'undefined') {
+    console.warn('[face-match] face-api.js not loaded — skipping face matching.');
+    return Promise.resolve();
+  }
+  faceApiLoading = (async () => {
+    try {
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_URL)
+      ]);
+      faceApiReady = true;
+      console.log('[face-match] models loaded ✓');
+    } catch (err) {
+      console.error('[face-match] model load failed:', err);
+    }
+  })();
+  return faceApiLoading;
+}
+
+async function dataUrlToImage(dataUrl) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
+  return img;
+}
+
+/**
+ * Compare two face images and return a similarity score in [0, 1].
+ * Returns null if either face can't be detected.
+ */
+async function compareFaces(selfieDataUrl, idFrontDataUrl) {
+  if (!selfieDataUrl || !idFrontDataUrl) return null;
+  await loadFaceApiModels();
+  if (!faceApiReady) return null;
+
+  try {
+    const [selfieImg, idImg] = await Promise.all([
+      dataUrlToImage(selfieDataUrl),
+      dataUrlToImage(idFrontDataUrl)
+    ]);
+    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.4 });
+
+    const [selfieDetect, idDetect] = await Promise.all([
+      faceapi.detectSingleFace(selfieImg, opts).withFaceLandmarks().withFaceDescriptor(),
+      faceapi.detectSingleFace(idImg, opts).withFaceLandmarks().withFaceDescriptor()
+    ]);
+
+    if (!selfieDetect || !idDetect) {
+      console.warn('[face-match] could not detect a face in', !selfieDetect ? 'selfie' : 'ID front');
+      return null;
+    }
+
+    // face-api returns a euclidean distance: 0 = identical, ~0.6+ = different.
+    // We convert to a similarity in [0, 1] where higher is better.
+    const distance = faceapi.euclideanDistance(selfieDetect.descriptor, idDetect.descriptor);
+    const similarity = Math.max(0, Math.min(1, 1 - distance));
+    console.log(`[face-match] distance=${distance.toFixed(3)}  similarity=${similarity.toFixed(3)}`);
+    return similarity;
+  } catch (err) {
+    console.error('[face-match] error:', err);
+    return null;
+  }
+}
 
 // ── IMAGE PROCESSING HELPERS ──────────────────────────────────────
 function stopStream(stream) { if (stream) stream.getTracks().forEach(t => t.stop()); }
@@ -477,7 +710,7 @@ document.getElementById('back-to-barcode-btn').addEventListener('click', () => {
   selfieStream = null;
   state.parsed = { idNumber: '', dob: '', expiry: '', name: '', jurisdiction: '' };
   showPhase(1);
-  startBarcodeCamera();
+  // Stay in whatever scan mode was active — don't force camera on
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -499,12 +732,32 @@ async function saveAndGeneratePass() {
   saveError.style.display     = 'none';
 
   try {
+    // ── 1) Run browser-side face matching (selfie ↔ ID front) ──
+    // Only possible if user uploaded an ID front image.
+    // face-api.js is fully free, runs locally — no API costs.
+    let matchScore = null;
+    if (state.idFrontImage && state.faceImageData) {
+      try {
+        const savingMsg = savingSection.querySelector('p');
+        if (savingMsg) savingMsg.textContent = 'Matching your selfie to your ID…';
+        matchScore = await compareFaces(state.faceImageData, state.idFrontImage);
+        if (savingMsg) savingMsg.textContent = 'Saving your pass…';
+      } catch (err) {
+        console.warn('[face-match] failed; continuing without match score:', err);
+      }
+    }
+    state.faceMatchScore = matchScore;
+
+    // ── 2) Submit to server ──
     const response = await fetch('/api/register', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...state.parsed,
-        faceImageData: state.faceImageData
+        faceImageData:  state.faceImageData,
+        idFrontImage:   state.idFrontImage  || undefined,
+        idBackImage:    state.idBackImage   || undefined,
+        faceMatchScore: matchScore
       })
     });
 
@@ -520,10 +773,10 @@ async function saveAndGeneratePass() {
     document.getElementById('pass-token-label').textContent = `ID · ${data.token}`;
 
     // Render Code 128 barcode (the value the retailer scanner reads)
-    // Uses embedded generator — no external CDN dependency.
+    // Wider bars + larger quiet zone → reliable scan from a phone screen.
     const barcodeSvgEl = document.getElementById('barcode-svg');
     renderCode128(barcodeSvgEl, data.barcode, {
-      barWidth: 2.4, height: 80, showText: true,
+      barWidth: 3.4, height: 96, margin: 18, showText: true,
       fontSize: 14, textMargin: 6,
       background: '#ffffff', lineColor: '#000000',
       fontFamily: 'JetBrains Mono, monospace'
@@ -532,6 +785,24 @@ async function saveAndGeneratePass() {
     // Side metadata panel (status + issued date — expiry intentionally NOT shown to customer)
     document.getElementById('pass-face-photo').src    = state.faceImageData;
     document.getElementById('pass-status-val').textContent   = `REGISTERED · ${pub.ageBadge}`;
+
+    // Photo-match indicator on the pass card
+    const matchEl = document.getElementById('pass-match-val');
+    if (matchEl) {
+      matchEl.classList.remove('match-strong', 'match-weak', 'match-fail');
+      if (matchScore === null || matchScore === undefined) {
+        matchEl.textContent = 'Skipped';
+      } else if (matchScore >= 0.55) {
+        matchEl.textContent = `${Math.round(matchScore * 100)}% ✓`;
+        matchEl.classList.add('match-strong');
+      } else if (matchScore >= 0.4) {
+        matchEl.textContent = `${Math.round(matchScore * 100)}% (weak)`;
+        matchEl.classList.add('match-weak');
+      } else {
+        matchEl.textContent = `${Math.round(matchScore * 100)}% (low)`;
+        matchEl.classList.add('match-fail');
+      }
+    }
 
     const now = new Date();
     document.getElementById('pass-generated').textContent =
@@ -733,9 +1004,30 @@ document.getElementById('restart-btn').addEventListener('click', () => {
   barcodeStream = null; selfieStream = null;
 
   state.faceImageData      = '';
+  state.idFrontImage       = '';
+  state.idBackImage        = '';
+  state.faceMatchScore     = null;
   state.token              = '';
   state.serverPublicRecord = null;
   state.parsed             = { idNumber: '', dob: '', expiry: '', name: '', jurisdiction: '' };
+
+  // Reset upload-mode UI
+  ['id-front-thumb', 'id-back-thumb'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.classList.remove('has-image');
+      el.style.backgroundImage = '';
+      el.parentElement?.classList.remove('has-image');
+    }
+  });
+  ['id-front-input', 'id-back-input'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const ub = document.getElementById('upload-process-btn');
+  if (ub) ub.disabled = true;
+  const us = document.getElementById('upload-status-text');
+  if (us) us.textContent = 'Add both sides of your ID to continue.';
 
   // Reset phase 1 UI
   barcodeSpinner.classList.remove('hidden');
@@ -750,7 +1042,11 @@ document.getElementById('restart-btn').addEventListener('click', () => {
   document.getElementById('barcode-svg').innerHTML        = '';
 
   showPhase(1);
-  startBarcodeCamera();
+  // Default to upload mode — user can opt into live camera via the toggle
+  document.getElementById('mode-upload-btn')?.classList.add('active');
+  document.getElementById('mode-camera-btn')?.classList.remove('active');
+  document.getElementById('upload-mode')?.classList.add('active');
+  document.getElementById('camera-mode')?.classList.remove('active');
 });
 
 // ── INIT ──────────────────────────────────────────────────────────

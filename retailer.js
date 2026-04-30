@@ -14,8 +14,10 @@
   // ── DOM ────────────────────────────────────────────────────────
   const modeManualBtn   = document.getElementById('mode-manual');
   const modeCameraBtn   = document.getElementById('mode-camera');
+  const modeUploadBtn   = document.getElementById('mode-upload');
   const sectionManual   = document.getElementById('section-manual');
   const sectionCamera   = document.getElementById('section-camera');
+  const sectionUpload   = document.getElementById('section-upload');
 
   const cameraPrompt    = document.getElementById('camera-prompt');
   const cameraActive    = document.getElementById('camera-active');
@@ -26,6 +28,10 @@
   const manualInput     = document.getElementById('manual-token');
   const manualBtn       = document.getElementById('manual-lookup');
 
+  const uploadInput     = document.getElementById('retailer-upload-input');
+  const uploadThumb     = document.getElementById('retailer-upload-thumb');
+  const uploadStatus    = document.getElementById('retailer-upload-status');
+
   const overlay         = document.getElementById('result-overlay');
   const card            = document.getElementById('result-card');
   const toneStrip       = document.getElementById('res-tone-strip');
@@ -34,6 +40,7 @@
   const photoEl         = document.getElementById('res-photo');
   const ageEl           = document.getElementById('res-age-badge');
   const statusEl        = document.getElementById('res-status');
+  const matchEl         = document.getElementById('res-match');
   const scansEl         = document.getElementById('res-scans');
   const flagsWrap       = document.getElementById('res-flags-wrap');
   const flagsList       = document.getElementById('res-flags-list');
@@ -46,24 +53,87 @@
   let countdownTimer = null;
   let clearTimer = null;
 
-  // ── MODE TOGGLE ────────────────────────────────────────────────
+  // ── MODE TOGGLE (3 modes: manual, camera, upload) ──────────────
   function setMode(mode) {
+    [modeManualBtn, modeCameraBtn, modeUploadBtn].forEach(b => b?.classList.remove('active'));
+    [sectionManual, sectionCamera, sectionUpload].forEach(s => s?.classList.remove('active'));
     if (mode === 'manual') {
-      modeManualBtn.classList.add('active');
-      modeCameraBtn.classList.remove('active');
-      sectionManual.classList.add('active');
-      sectionCamera.classList.remove('active');
+      modeManualBtn?.classList.add('active');
+      sectionManual?.classList.add('active');
       stopCamera();
       setTimeout(() => manualInput.focus(), 50);
-    } else {
-      modeCameraBtn.classList.add('active');
-      modeManualBtn.classList.remove('active');
-      sectionCamera.classList.add('active');
-      sectionManual.classList.remove('active');
+    } else if (mode === 'camera') {
+      modeCameraBtn?.classList.add('active');
+      sectionCamera?.classList.add('active');
+    } else if (mode === 'upload') {
+      modeUploadBtn?.classList.add('active');
+      sectionUpload?.classList.add('active');
+      stopCamera();
     }
   }
-  modeManualBtn.addEventListener('click', () => setMode('manual'));
-  modeCameraBtn.addEventListener('click', () => setMode('camera'));
+  modeManualBtn?.addEventListener('click', () => setMode('manual'));
+  modeCameraBtn?.addEventListener('click', () => setMode('camera'));
+  modeUploadBtn?.addEventListener('click', () => setMode('upload'));
+
+  // ── UPLOAD MODE — scan a photo of the customer's pass barcode ──
+  async function handleUploadedPassImage(file) {
+    if (!file) return;
+    if (uploadStatus) uploadStatus.querySelector('span').textContent = 'Reading barcode…';
+    try {
+      // Resize for speed
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => {
+            const maxDim = 1400;
+            let w = img.width, h = img.height;
+            if (w > maxDim || h > maxDim) {
+              const s = Math.min(maxDim / w, maxDim / h);
+              w = Math.round(w * s); h = Math.round(h * s);
+            }
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            c.getContext('2d').drawImage(img, 0, 0, w, h);
+            resolve(c.toDataURL('image/jpeg', 0.9));
+          };
+          img.onerror = reject;
+          img.src = reader.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      // Show thumbnail preview
+      if (uploadThumb) {
+        uploadThumb.classList.add('has-image');
+        uploadThumb.style.backgroundImage = `url('${dataUrl}')`;
+      }
+
+      // ZXing — try to detect a Code 128 (or any 1D barcode) in the image
+      if (!window.ZXing) throw new Error('Barcode library not loaded.');
+      const hints = new Map();
+      hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+        window.ZXing.BarcodeFormat.CODE_128,
+        window.ZXing.BarcodeFormat.CODE_39,
+        window.ZXing.BarcodeFormat.QR_CODE
+      ]);
+      hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
+
+      const reader = new window.ZXing.BrowserMultiFormatReader(hints);
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
+      const result = await reader.decodeFromImageElement(img);
+      const text = result.getText();
+      if (uploadStatus) uploadStatus.querySelector('span').textContent = `Found: ${text}`;
+      lookupToken(text);
+    } catch (err) {
+      console.error('[retailer] upload decode failed:', err);
+      if (uploadStatus) uploadStatus.querySelector('span').textContent =
+        'Could not read a barcode from that photo. Try a clearer, well-lit photo, or type the code manually.';
+    }
+  }
+  uploadInput?.addEventListener('change', e => handleUploadedPassImage(e.target.files[0]));
 
   // ── MANUAL ENTRY ───────────────────────────────────────────────
   function doManualLookup() {
@@ -182,11 +252,25 @@
       }
 
       const r = data.publicRecord;
-      const isExpired = r.expiryStatus === 'expired';
-      const isUnder = !r.verified;
-      const tone = (isExpired || isUnder)
+      const isExpired   = r.expiryStatus === 'expired';
+      const isUnder     = r.ageBadge === '18+' || r.ageBadge === 'UNDER';
+      const matchStatus = r.faceMatchStatus || 'unknown';
+      const matchScore  = r.faceMatchScore;
+      const matchFail   = matchStatus === 'fail';
+      const matchWeak   = matchStatus === 'weak';
+
+      const tone = (isExpired || isUnder || matchFail)
         ? 'denied'
-        : (r.flags && r.flags.length ? 'warning' : 'approved');
+        : ((matchWeak || (r.flags && r.flags.length)) ? 'warning' : 'approved');
+
+      let matchText = '—';
+      if (matchScore !== null && matchScore !== undefined) {
+        const pct = Math.round(matchScore * 100);
+        matchText = matchStatus === 'strong' ? `${pct}% ✓`
+                  : matchStatus === 'weak'   ? `${pct}% (weak)`
+                  : matchStatus === 'fail'   ? `${pct}% ✗`
+                  : `${pct}%`;
+      }
 
       showResult({
         tone,
@@ -194,11 +278,15 @@
               : tone === 'warning' ? 'Verified — see alerts'
               : 'NOT VERIFIED',
         subtitle: tone === 'approved'
-              ? 'Customer is registered'
-              : 'Cashier discretion required',
+              ? 'Photo match confirmed'
+              : tone === 'warning'
+              ? 'Cashier discretion advised'
+              : (matchFail ? 'Photo does not match ID' : 'Cashier discretion required'),
         photo: r.faceImage,
         age: r.ageBadge,
-        status: r.verified ? 'Registered & verified' : 'Registered · NOT verified',
+        status: r.verified ? 'Registered & verified' : 'Registered · check ID',
+        match: matchText,
+        matchStatus,
         scans: String(r.scanCount || 1),
         flags: r.flags || []
       });
@@ -213,7 +301,7 @@
       tone: 'denied',
       title: 'Lookup failed',
       subtitle: msg,
-      photo: '', age: '—', status: '—', scans: '—',
+      photo: '', age: '—', status: '—', match: '—', matchStatus: 'unknown', scans: '—',
       flags: []
     });
   }
@@ -230,6 +318,15 @@
     ageEl.textContent        = r.age;
     statusEl.textContent     = r.status;
     scansEl.textContent      = r.scans;
+
+    if (matchEl) {
+      matchEl.textContent = r.match || '—';
+      matchEl.style.color =
+        r.matchStatus === 'strong' ? '#1f6f48'
+      : r.matchStatus === 'weak'   ? '#b85510'
+      : r.matchStatus === 'fail'   ? '#c8362b'
+      : '';
+    }
 
     if (r.flags && r.flags.length) {
       flagsWrap.hidden = false;
@@ -308,6 +405,8 @@
       case 'ID_EXPIRING_SOON':  return 'Government ID expires within 30 days';
       case 'JUST_REGISTERED':   return 'Customer registered less than 5 minutes ago';
       case 'UNKNOWN_PASS':      return 'Barcode is not in the system';
+      case 'PHOTO_MATCH_FAIL':  return 'Selfie does NOT match ID photo — verify visually';
+      case 'PHOTO_MATCH_WEAK':  return 'Selfie / ID photo match is weak — verify visually';
       default:                  return flag;
     }
   }

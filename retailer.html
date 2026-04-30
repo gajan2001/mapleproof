@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Mapleproof &mdash; Retailer</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="apple-touch-icon" href="favicon.png">
+  <meta name="theme-color" content="#1f6f48">
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
 </head>
@@ -11,12 +14,7 @@
 
   <header class="topbar">
     <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <path d="M24 4 L28 14 L38 12 L33 22 L42 26 L33 30 L38 40 L28 38 L24 48 L20 38 L10 40 L15 30 L6 26 L15 22 L10 12 L20 14 Z" fill="url(#leafGradR)"/>
-        <defs><linearGradient id="leafGradR" x1="0" y1="0" x2="48" y2="48">
-          <stop offset="0%" stop-color="#c8362b"/><stop offset="50%" stop-color="#d97a23"/><stop offset="100%" stop-color="#1f7a3a"/>
-        </linearGradient></defs>
-      </svg>
+      <img class="brand-mark-img" src="favicon.png" alt="" width="36" height="36">
       <span class="brand-word">Mapleproof</span>
       <span class="brand-tag">Retailer</span>
     </div>
@@ -29,10 +27,11 @@
       <p>Type or scan the customer's barcode to verify age.</p>
     </header>
 
-    <!-- Mode toggle: type vs camera -->
+    <!-- Mode toggle: type / camera / upload image -->
     <div class="mode-toggle">
       <button id="mode-manual" class="active" type="button">Type code</button>
       <button id="mode-camera" type="button">Use camera</button>
+      <button id="mode-upload" type="button">Upload image</button>
     </div>
 
     <!-- ─── MANUAL MODE (default) ─── -->
@@ -72,6 +71,25 @@
         </div>
       </div>
     </section>
+
+    <!-- ─── UPLOAD IMAGE MODE (fallback if camera scan fails) ─── -->
+    <section id="section-upload" class="scan-section">
+      <label class="upload-card single" for="retailer-upload-input">
+        <div class="upload-thumb" id="retailer-upload-thumb">
+          <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6" y="10" width="36" height="28" rx="3"/>
+            <path d="M14 24 L14 24.01 M18 24 L18 24.01 M22 24 L22 24.01 M26 24 L26 24.01 M30 24 L30 24.01 M34 24 L34 24.01" stroke-linecap="round"/>
+            <path d="M14 16 L14 32 M18 16 L18 32 M22 16 L22 32 M26 16 L26 32 M30 16 L30 32 M34 16 L34 32" stroke-width="1.5"/>
+          </svg>
+          <span class="upload-label">Upload barcode photo</span>
+          <span class="upload-hint">Take or pick a clear photo of the customer's pass</span>
+        </div>
+        <input type="file" id="retailer-upload-input" accept="image/*" capture="environment" hidden>
+      </label>
+      <div id="retailer-upload-status" class="scan-status" style="margin-top:16px;">
+        <span>Tap above to add a photo.</span>
+      </div>
+    </section>
   </main>
 
   <!-- ─── RESULT MODAL ─── -->
@@ -106,6 +124,10 @@
           <div class="result-stat">
             <label>Status</label>
             <strong id="res-status">&mdash;</strong>
+          </div>
+          <div class="result-stat">
+            <label>Photo match</label>
+            <strong id="res-match">&mdash;</strong>
           </div>
           <div class="result-stat">
             <label>Total scans</label>
