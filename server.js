@@ -55,22 +55,24 @@ try {
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS customers (
-      token             TEXT PRIMARY KEY,
-      id_hash           TEXT NOT NULL UNIQUE,
-      dob               TEXT,
-      dob_enc           BLOB,
-      expiry            TEXT NOT NULL,
-      name_enc          BLOB,
-      jurisdiction      TEXT,
-      face_enc          BLOB NOT NULL,
-      id_front_enc      BLOB,
-      id_back_enc       BLOB,
-      face_match_score  REAL,
-      face_match_at     TEXT,
-      registered_at     TEXT NOT NULL,
-      updated_at        TEXT NOT NULL,
-      last_seen_at      TEXT,
-      scan_count        INTEGER NOT NULL DEFAULT 0
+      token              TEXT PRIMARY KEY,
+      id_hash            TEXT NOT NULL UNIQUE,
+      dob                TEXT,
+      dob_enc            BLOB,
+      expiry             TEXT NOT NULL,
+      name_enc           BLOB,
+      jurisdiction       TEXT,
+      face_enc           BLOB NOT NULL,
+      id_front_enc       BLOB,
+      id_back_enc        BLOB,
+      face_match_score   REAL,
+      face_match_at      TEXT,
+      liveness_verified  INTEGER NOT NULL DEFAULT 0,
+      liveness_challenges TEXT,
+      registered_at      TEXT NOT NULL,
+      updated_at         TEXT NOT NULL,
+      last_seen_at       TEXT,
+      scan_count         INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_customers_id_hash ON customers(id_hash);
 
@@ -84,28 +86,18 @@ try {
     CREATE INDEX IF NOT EXISTS idx_scan_log_token ON scan_log(token);
   `);
 
-  // Migration: encrypt any legacy plaintext DOBs + add new face-match columns
+  // Migration: encrypt any legacy plaintext DOBs + add new columns
   (() => {
     const cols = db.prepare("PRAGMA table_info(customers)").all();
     const colNames = cols.map(c => c.name);
 
-    if (!colNames.includes('dob_enc')) db.exec('ALTER TABLE customers ADD COLUMN dob_enc BLOB');
-    if (!colNames.includes('id_front_enc')) {
-      db.exec('ALTER TABLE customers ADD COLUMN id_front_enc BLOB');
-      console.log('[mapleproof] migrated: added id_front_enc column');
-    }
-    if (!colNames.includes('id_back_enc')) {
-      db.exec('ALTER TABLE customers ADD COLUMN id_back_enc BLOB');
-      console.log('[mapleproof] migrated: added id_back_enc column');
-    }
-    if (!colNames.includes('face_match_score')) {
-      db.exec('ALTER TABLE customers ADD COLUMN face_match_score REAL');
-      console.log('[mapleproof] migrated: added face_match_score column');
-    }
-    if (!colNames.includes('face_match_at')) {
-      db.exec('ALTER TABLE customers ADD COLUMN face_match_at TEXT');
-      console.log('[mapleproof] migrated: added face_match_at column');
-    }
+    if (!colNames.includes('dob_enc'))            db.exec('ALTER TABLE customers ADD COLUMN dob_enc BLOB');
+    if (!colNames.includes('id_front_enc'))       { db.exec('ALTER TABLE customers ADD COLUMN id_front_enc BLOB'); console.log('[mapleproof] migrated: id_front_enc'); }
+    if (!colNames.includes('id_back_enc'))        { db.exec('ALTER TABLE customers ADD COLUMN id_back_enc BLOB'); console.log('[mapleproof] migrated: id_back_enc'); }
+    if (!colNames.includes('face_match_score'))   { db.exec('ALTER TABLE customers ADD COLUMN face_match_score REAL'); console.log('[mapleproof] migrated: face_match_score'); }
+    if (!colNames.includes('face_match_at'))      { db.exec('ALTER TABLE customers ADD COLUMN face_match_at TEXT'); console.log('[mapleproof] migrated: face_match_at'); }
+    if (!colNames.includes('liveness_verified'))  { db.exec('ALTER TABLE customers ADD COLUMN liveness_verified INTEGER NOT NULL DEFAULT 0'); console.log('[mapleproof] migrated: liveness_verified'); }
+    if (!colNames.includes('liveness_challenges')){ db.exec('ALTER TABLE customers ADD COLUMN liveness_challenges TEXT'); console.log('[mapleproof] migrated: liveness_challenges'); }
 
     const legacy = db.prepare(`
       SELECT token, dob FROM customers
@@ -217,6 +209,7 @@ app.use(express.static(__dirname, {
   setHeaders: (res, fp) => { if (fp.endsWith('.html')) res.setHeader('Cache-Control', 'no-store'); }
 }));
 app.get('/',         (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/app',      (_req, res) => res.sendFile(path.join(__dirname, 'app.html')));
 app.get('/retailer', (_req, res) => res.sendFile(path.join(__dirname, 'retailer.html')));
 app.get('/admin',    (_req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
 
@@ -255,9 +248,11 @@ app.post('/api/register', (req, res) => {
     const {
       idNumber, dob, expiry, name, jurisdiction,
       faceImageData,
-      idFrontImage,    // optional: data URL of front of ID
-      idBackImage,     // optional: data URL of back of ID
-      faceMatchScore   // optional: 0..1 similarity score from browser-side face-api.js
+      idFrontImage,         // optional: data URL of front of ID
+      idBackImage,          // optional: data URL of back of ID
+      faceMatchScore,       // optional: 0..1 similarity score from browser-side face-api.js
+      livenessVerified,     // optional: true if user passed liveness challenge
+      livenessChallenges    // optional: array of challenge IDs performed
     } = req.body || {};
 
     if (!idNumber || !dob || !expiry || !faceImageData)
@@ -291,6 +286,9 @@ app.post('/api/register', (req, res) => {
     const exp = expiryStatus(expiry);
     if (exp.state === 'expired') return res.status(403).json({ ok: false, error: 'Government ID is expired.' });
 
+    const liveOk = livenessVerified ? 1 : 0;
+    const liveChallengesJson = Array.isArray(livenessChallenges) ? JSON.stringify(livenessChallenges) : null;
+
     const idHash = hashId(idNumber);
     const now = new Date().toISOString();
     const existing = db.prepare('SELECT token, registered_at FROM customers WHERE id_hash = ?').get(idHash);
@@ -305,6 +303,7 @@ app.post('/api/register', (req, res) => {
            SET dob_enc = ?, expiry = ?, name_enc = ?, jurisdiction = ?,
                face_enc = ?, id_front_enc = ?, id_back_enc = ?,
                face_match_score = ?, face_match_at = ?,
+               liveness_verified = ?, liveness_challenges = ?,
                updated_at = ?, dob = NULL
          WHERE token = ?
       `).run(encrypt(dob), expiry, encrypt(name || ''), jurisdiction || '',
@@ -312,6 +311,7 @@ app.post('/api/register', (req, res) => {
              idFrontImage ? encrypt(idFrontImage) : null,
              idBackImage  ? encrypt(idBackImage)  : null,
              matchScore, matchScore !== null ? now : null,
+             liveOk, liveChallengesJson,
              now, token);
     } else {
       do { token = generateToken(); }
@@ -322,13 +322,15 @@ app.post('/api/register', (req, res) => {
           (token, id_hash, dob_enc, expiry, name_enc, jurisdiction,
            face_enc, id_front_enc, id_back_enc,
            face_match_score, face_match_at,
+           liveness_verified, liveness_challenges,
            registered_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(token, idHash, encrypt(dob), expiry, encrypt(name || ''),
              jurisdiction || '', encrypt(faceImageData),
              idFrontImage ? encrypt(idFrontImage) : null,
              idBackImage  ? encrypt(idBackImage)  : null,
              matchScore, matchScore !== null ? now : null,
+             liveOk, liveChallengesJson,
              now, now);
     }
 
@@ -348,6 +350,7 @@ app.post('/api/register', (req, res) => {
         expiry,
         expiryStatus:      exp.state,
         faceMatchScore:    matchScore,
+        livenessVerified:  !!liveOk,
         registeredAt:      existing ? existing.registered_at : now
       }
     });
@@ -370,6 +373,7 @@ app.get('/api/pass/:token', (req, res) => {
     const row = db.prepare(`
       SELECT token, dob, dob_enc, expiry, jurisdiction, face_enc,
              face_match_score, face_match_at,
+             liveness_verified, liveness_challenges,
              registered_at, updated_at, last_seen_at, scan_count
         FROM customers WHERE token = ?
     `).get(token);
@@ -392,6 +396,8 @@ app.get('/api/pass/:token', (req, res) => {
       else matchStatus = 'fail';
     }
 
+    const livenessVerified = !!row.liveness_verified;
+
     const flags = [];
     if (age < LEGAL_AGE) flags.push('UNDER_LEGAL_AGE');
     if (age >= 19 && age < 21) flags.push('CLOSE_TO_LIMIT');
@@ -400,6 +406,7 @@ app.get('/api/pass/:token', (req, res) => {
     if (Date.now() - new Date(row.registered_at).getTime() < 5 * 60_000) flags.push('JUST_REGISTERED');
     if (matchStatus === 'fail') flags.push('PHOTO_MATCH_FAIL');
     else if (matchStatus === 'weak') flags.push('PHOTO_MATCH_WEAK');
+    if (!livenessVerified) flags.push('NO_LIVENESS_CHECK');
 
     const now = new Date().toISOString();
     db.prepare('UPDATE customers SET last_seen_at = ?, scan_count = scan_count + 1 WHERE token = ?').run(now, token);
@@ -408,18 +415,19 @@ app.get('/api/pass/:token', (req, res) => {
     return res.json({
       ok: true,
       publicRecord: {
-        ageBadge:        ageBadge(age),
-        verified:        age >= LEGAL_AGE && exp.state !== 'expired' && matchStatus !== 'fail',
-        expiry:          row.expiry,
-        expiryStatus:    exp.state,
-        expiryDays:      exp.days,
-        jurisdiction:    row.jurisdiction || '',
-        faceImage:       decrypt(row.face_enc),
-        faceMatchScore:  matchScore,
-        faceMatchStatus: matchStatus,
-        registeredAt:    row.registered_at,
-        lastSeenAt:      row.last_seen_at,
-        scanCount:       row.scan_count + 1,
+        ageBadge:         ageBadge(age),
+        verified:         age >= LEGAL_AGE && exp.state !== 'expired' && matchStatus !== 'fail' && livenessVerified,
+        expiry:           row.expiry,
+        expiryStatus:     exp.state,
+        expiryDays:       exp.days,
+        jurisdiction:     row.jurisdiction || '',
+        faceImage:        decrypt(row.face_enc),
+        faceMatchScore:   matchScore,
+        faceMatchStatus:  matchStatus,
+        livenessVerified: livenessVerified,
+        registeredAt:     row.registered_at,
+        lastSeenAt:       row.last_seen_at,
+        scanCount:        row.scan_count + 1,
         flags
       }
     });

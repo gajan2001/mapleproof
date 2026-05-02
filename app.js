@@ -122,11 +122,13 @@ function renderCode128(svgEl, text, opts = {}) {
 
 // ── STATE ──────────────────────────────────────────────────────────
 const state = {
-  faceImageData: '',
-  idFrontImage:  '',
-  idBackImage:   '',
+  faceImageData:  '',
+  idFrontImage:   '',
+  idBackImage:    '',
   faceMatchScore: null,
-  token:         '',
+  liveDescriptor: null,            // 128-D face descriptor from liveness check
+  livenessChallenges: null,         // which challenges were performed (for audit)
+  token:          '',
   parsed: { idNumber: '', dob: '', expiry: '', name: '', jurisdiction: '' },
   serverPublicRecord: null
 };
@@ -284,8 +286,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
       state.parsed = parsed;
-      if (uploadStatus) uploadStatus.textContent = '✓ ID barcode read. Moving to selfie…';
-      setTimeout(() => { showPhase(2); startSelfieCamera(); }, 600);
+      if (uploadStatus) uploadStatus.textContent = '✓ ID barcode read. Continuing…';
+      setTimeout(() => { showPhase(2); /* liveness intro shown automatically */ }, 600);
     } catch (err) {
       console.error('[upload] barcode decode failed:', err);
       if (uploadStatus) uploadStatus.textContent =
@@ -653,13 +655,13 @@ async function scanFrame() {
     state.parsed = parsed;
     barcodeCamLabel.textContent = '✓ Barcode read';
     barcodeCamLabel.className   = 'cam-status found';
-    setBarcodeStatus(`Decoded successfully. Moving to selfie…`, 'ok');
+    setBarcodeStatus(`Decoded successfully. Continuing…`, 'ok');
     barcodeSpinner.classList.add('hidden');
 
     decodeInFlight = false;
     setTimeout(() => {
       showPhase(2);
-      startSelfieCamera();
+      /* liveness intro shown automatically */
     }, 700);
 
   } catch {
@@ -675,43 +677,154 @@ document.getElementById('retry-barcode-btn').addEventListener('click', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-//  PHASE 2 — SELFIE
+//  PHASE 2 — LIVENESS CHECK (active anti-spoofing)
 // ─────────────────────────────────────────────────────────────────
-async function startSelfieCamera() {
+//  Replaces the old "take a selfie" flow. The user must perform 3
+//  random challenges (blink, smile, turn head, etc.) in front of the
+//  camera. Each challenge is verified in real-time using face-api.js
+//  facial landmarks. We capture the best frame for the pass photo,
+//  AND get a 128-D face descriptor that we can match against the ID.
+//
+//  All free, all browser-side. No API. Hard to spoof with a printed
+//  photo because the user must perform unpredictable physical actions.
+// ─────────────────────────────────────────────────────────────────
+
+async function startLivenessCamera() {
   try {
     selfieStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
     });
     selfieVideo.srcObject = selfieStream;
     await selfieVideo.play();
+    return true;
   } catch (err) {
-    console.error(err);
-    alert('Front camera unavailable. Please allow camera access.');
+    console.error('[liveness] camera error:', err);
+    alert('Front camera unavailable. Please allow camera access and try again.');
+    return false;
   }
 }
 
-document.getElementById('capture-selfie-btn').addEventListener('click', () => {
-  const w = selfieVideo.videoWidth  || 720;
-  const h = selfieVideo.videoHeight || 720;
-  selfieCanvas.width  = w;
-  selfieCanvas.height = h;
-  selfieCanvas.getContext('2d').drawImage(selfieVideo, 0, 0);
-  state.faceImageData = selfieCanvas.toDataURL('image/jpeg', 0.86);
+function showLivenessUI(which) {
+  const intro    = document.getElementById('liveness-intro');
+  const active   = document.getElementById('liveness-active');
+  const loading  = document.getElementById('liveness-loading');
+  const failure  = document.getElementById('liveness-fail');
+  intro.hidden   = which !== 'intro';
+  active.hidden  = which !== 'active';
+  loading.hidden = which !== 'loading';
+  failure.hidden = which !== 'fail';
+}
 
-  stopStream(selfieStream);
-  selfieStream = null;
+async function runLivenessFlow() {
+  if (!window.MapleproofLiveness) {
+    alert('Liveness module failed to load. Please refresh the page.');
+    return;
+  }
 
+  // Show loading while models download (first time only — they're cached after)
+  showLivenessUI('loading');
+  const ready = await window.MapleproofLiveness.ensureModels();
+  if (!ready) {
+    document.getElementById('liveness-fail-title').textContent = 'Could not load models';
+    document.getElementById('liveness-fail-msg').textContent =
+      'The face-recognition models could not be downloaded. Check your internet connection and try again.';
+    showLivenessUI('fail');
+    return;
+  }
+
+  // Open camera
+  showLivenessUI('active');
+  const cameraOk = await startLivenessCamera();
+  if (!cameraOk) {
+    showLivenessUI('intro');
+    return;
+  }
+
+  // Wait for video to actually be playing
+  await new Promise(r => {
+    if (selfieVideo.readyState >= 2) return r();
+    selfieVideo.addEventListener('loadeddata', r, { once: true });
+  });
+
+  // Run the challenge sequence
+  let result;
+  try {
+    result = await window.MapleproofLiveness.runLivenessChallenge({
+      videoEl:    selfieVideo,
+      overlayEl:  document.getElementById('selfie-overlay'),
+      promptEl:   document.getElementById('liveness-prompt'),
+      iconEl:     document.getElementById('liveness-icon'),
+      stepEl:     document.getElementById('liveness-step'),
+      challengeCount: 3,
+      timeoutPerChallenge: 12000
+    });
+  } catch (err) {
+    console.error('[liveness] error:', err);
+    document.getElementById('liveness-fail-title').textContent = 'Liveness check error';
+    document.getElementById('liveness-fail-msg').textContent = err.message || 'Something went wrong.';
+    showLivenessUI('fail');
+    stopStream(selfieStream); selfieStream = null;
+    return;
+  }
+
+  if (!result.success) {
+    document.getElementById('liveness-fail-title').textContent = 'Liveness check failed';
+    document.getElementById('liveness-fail-msg').textContent = result.message || 'Please try again.';
+    showLivenessUI('fail');
+    stopStream(selfieStream); selfieStream = null;
+    return;
+  }
+
+  // Success! Save the captured face image + descriptor
+  state.faceImageData    = result.faceImageData;
+  state.liveDescriptor   = result.descriptor;     // 128-D face vector
+  state.livenessChallenges = result.challenges;
+  console.log('[liveness] success — captured face + descriptor');
+
+  // Stop camera and continue to pass generation
+  stopStream(selfieStream); selfieStream = null;
   showPhase(3);
   saveAndGeneratePass();
+}
+
+// ── Wire up phase-2 buttons ────────────────────────────────────────
+document.getElementById('start-liveness-btn')?.addEventListener('click', () => {
+  runLivenessFlow();
 });
 
-document.getElementById('back-to-barcode-btn').addEventListener('click', () => {
-  stopStream(selfieStream);
-  selfieStream = null;
-  state.parsed = { idNumber: '', dob: '', expiry: '', name: '', jurisdiction: '' };
-  showPhase(1);
-  // Stay in whatever scan mode was active — don't force camera on
+document.getElementById('cancel-liveness-btn')?.addEventListener('click', () => {
+  stopStream(selfieStream); selfieStream = null;
+  showLivenessUI('intro');
 });
+
+document.getElementById('retry-liveness-btn')?.addEventListener('click', () => {
+  showLivenessUI('intro');
+});
+
+['back-to-id-btn', 'back-to-id-btn-2'].forEach(id => {
+  document.getElementById(id)?.addEventListener('click', () => {
+    stopStream(selfieStream); selfieStream = null;
+    state.parsed = { idNumber: '', dob: '', expiry: '', name: '', jurisdiction: '' };
+    state.liveDescriptor = null;
+    showLivenessUI('intro');
+    showPhase(1);
+  });
+});
+
+// Reset to intro when phase 2 is shown
+document.getElementById('start-liveness-btn') && (() => {
+  // Listen for phase changes via mutation observer so liveness UI resets to intro
+  const phase2 = document.getElementById('phase-selfie');
+  if (!phase2) return;
+  const obs = new MutationObserver(() => {
+    if (phase2.classList.contains('active') && !selfieStream) {
+      // Default back to intro screen (only when no active stream — i.e. fresh entry)
+      const fail = document.getElementById('liveness-fail');
+      if (!fail || fail.hidden) showLivenessUI('intro');
+    }
+  });
+  obs.observe(phase2, { attributes: true, attributeFilter: ['class'] });
+})();
 
 // ─────────────────────────────────────────────────────────────────
 //  PHASE 3 — POST to server, render Code 128 barcode pass
@@ -732,15 +845,26 @@ async function saveAndGeneratePass() {
   saveError.style.display     = 'none';
 
   try {
-    // ── 1) Run browser-side face matching (selfie ↔ ID front) ──
-    // Only possible if user uploaded an ID front image.
-    // face-api.js is fully free, runs locally — no API costs.
+    // ── 1) Compute face match (selfie ↔ ID front) ──
+    // If we already have a descriptor from the liveness check (much faster),
+    // use it. Otherwise fall back to compareFaces() which extracts a fresh
+    // descriptor from the captured image.
     let matchScore = null;
-    if (state.idFrontImage && state.faceImageData) {
+    if (state.idFrontImage) {
       try {
         const savingMsg = savingSection.querySelector('p');
-        if (savingMsg) savingMsg.textContent = 'Matching your selfie to your ID…';
-        matchScore = await compareFaces(state.faceImageData, state.idFrontImage);
+        if (savingMsg) savingMsg.textContent = 'Matching your face to your ID…';
+
+        if (state.liveDescriptor && window.MapleproofLiveness) {
+          // Use the descriptor we already extracted during liveness
+          matchScore = await window.MapleproofLiveness.compareDescriptorToImage(
+            state.liveDescriptor, state.idFrontImage
+          );
+        } else if (state.faceImageData) {
+          // Fallback: extract from the captured face image
+          matchScore = await compareFaces(state.faceImageData, state.idFrontImage);
+        }
+
         if (savingMsg) savingMsg.textContent = 'Saving your pass…';
       } catch (err) {
         console.warn('[face-match] failed; continuing without match score:', err);
@@ -757,7 +881,9 @@ async function saveAndGeneratePass() {
         faceImageData:  state.faceImageData,
         idFrontImage:   state.idFrontImage  || undefined,
         idBackImage:    state.idBackImage   || undefined,
-        faceMatchScore: matchScore
+        faceMatchScore: matchScore,
+        livenessVerified:   !!state.liveDescriptor,
+        livenessChallenges: state.livenessChallenges || undefined
       })
     });
 
@@ -1007,6 +1133,8 @@ document.getElementById('restart-btn').addEventListener('click', () => {
   state.idFrontImage       = '';
   state.idBackImage        = '';
   state.faceMatchScore     = null;
+  state.liveDescriptor     = null;
+  state.livenessChallenges = null;
   state.token              = '';
   state.serverPublicRecord = null;
   state.parsed             = { idNumber: '', dob: '', expiry: '', name: '', jurisdiction: '' };

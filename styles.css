@@ -1157,3 +1157,134 @@ img, svg, video, canvas { max-width: 100%; display: block; }
   cursor: not-allowed;
   transform: none;
 }
+
+/* ───────── LIVENESS CHECK UI ───────── */
+.liveness-intro {
+  text-align: center;
+  padding: 24px 16px;
+  max-width: 520px;
+  margin: 0 auto;
+}
+.liveness-intro-icon {
+  font-size: 56px;
+  margin-bottom: 8px;
+}
+.liveness-intro h3 {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 18px;
+  color: #0a1f17;
+}
+.liveness-steps {
+  text-align: left;
+  display: inline-block;
+  padding: 0 0 0 24px;
+  margin: 0 0 22px;
+  color: #2d4438;
+  font-size: 15px;
+  line-height: 1.7;
+}
+.liveness-steps li { margin-bottom: 6px; }
+.liveness-steps strong { color: #1f6f48; }
+.liveness-privacy {
+  font-size: 13px;
+  color: #5a7065;
+  background: #f3f7f4;
+  padding: 12px 14px;
+  border-radius: 10px;
+  margin: 0 0 24px;
+}
+.liveness-intro .btn-primary { display: block; width: 100%; margin-bottom: 10px; }
+.liveness-intro .btn-ghost   { display: block; width: 100%; }
+
+/* Active liveness session */
+.selfie-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.liveness-prompt-card {
+  background: #fff;
+  border: 2px solid #1f6f48;
+  border-radius: 18px;
+  padding: 22px 18px;
+  margin: 18px auto;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 6px 20px -8px rgba(31, 111, 72, 0.25);
+  animation: liveness-pop 0.4s ease;
+}
+@keyframes liveness-pop {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.liveness-step {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #1f6f48;
+  margin-bottom: 12px;
+}
+.liveness-icon {
+  font-size: 48px;
+  line-height: 1;
+  margin-bottom: 10px;
+}
+.liveness-prompt {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0a1f17;
+  letter-spacing: -0.01em;
+}
+
+#liveness-loading {
+  text-align: center;
+  padding: 60px 16px;
+}
+#liveness-loading p {
+  margin-top: 16px;
+  color: #5a7065;
+  font-size: 14px;
+}
+
+#liveness-fail {
+  text-align: center;
+  padding: 32px 16px;
+  max-width: 440px;
+  margin: 0 auto;
+}
+.liveness-fail-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: #fde8e6;
+  color: #c8362b;
+  font-size: 38px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+}
+#liveness-fail h3 {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0 0 10px;
+  color: #0a1f17;
+}
+#liveness-fail p {
+  color: #5a7065;
+  margin: 0 0 20px;
+  font-size: 15px;
+}
+
+/* Camera wrap needs relative positioning so overlay sits on top */
+.camera-wrap.selfie-wrap {
+  position: relative;
+}
+.camera-wrap.selfie-wrap video {
+  transform: scaleX(-1); /* mirror for natural feel */
+}

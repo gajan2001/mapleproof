@@ -407,6 +407,7 @@
       case 'UNKNOWN_PASS':      return 'Barcode is not in the system';
       case 'PHOTO_MATCH_FAIL':  return 'Selfie does NOT match ID photo — verify visually';
       case 'PHOTO_MATCH_WEAK':  return 'Selfie / ID photo match is weak — verify visually';
+      case 'NO_LIVENESS_CHECK': return 'No liveness check performed at registration';
       default:                  return flag;
     }
   }

@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mapleproof — Verify your age</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="apple-touch-icon" href="favicon.png">
+  <meta name="theme-color" content="#1f6f48">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <a class="brand" href="/" style="text-decoration:none;color:inherit;">
+      <img class="brand-mark-img" src="favicon.png" alt="" width="36" height="36">
+      <span class="brand-word">Mapleproof</span>
+    </a>
+    <a class="topbar-link" href="/">&larr; Home</a>
+  </header>
+
+  <main class="container">
+
+    <!-- ─── PHASE 0: HOME ─── -->
+    <section id="phase-home" class="phase phase-home active">
+      <div class="hero">
+        <img class="hero-mark-img" src="favicon.png" alt="" width="84" height="84">
+
+        <h1 class="hero-title">Verify your age.</h1>
+        <p class="hero-tag">One pass for every retailer.</p>
+
+        <button id="start-btn" class="btn-primary btn-lg">Get my pass &rarr;</button>
+
+        <div class="trust-row">
+          <div class="trust-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2 L4 6 V12 C4 17 7.5 21 12 22 C16.5 21 20 17 20 12 V6 Z"/>
+              <path d="M9 12 L11 14 L15 10"/>
+            </svg>
+            <span>Encrypted</span>
+          </div>
+          <div class="trust-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="4" y="10" width="16" height="11" rx="2"/>
+              <path d="M8 10 V7 a4 4 0 0 1 8 0 V10"/>
+            </svg>
+            <span>Stored locally</span>
+          </div>
+          <div class="trust-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="8" r="4"/>
+              <path d="M4 21 a8 8 0 0 1 16 0"/>
+            </svg>
+            <span>Private</span>
+          </div>
+        </div>
+
+        <div class="hero-steps">
+          <div class="step-mini"><span>1</span> Scan ID</div>
+          <div class="step-mini"><span>2</span> Selfie</div>
+          <div class="step-mini"><span>3</span> Done</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── PHASE 1: SCAN ID ─── -->
+    <section id="phase-scan" class="phase">
+      <header class="phase-head">
+        <h2>Scan your ID</h2>
+        <p>Use your camera, or upload a clear photo of your licence.</p>
+      </header>
+
+      <!-- Mode toggle: live camera vs upload -->
+      <div class="mode-toggle">
+        <button id="mode-upload-btn" class="active" type="button">Upload photo (faster)</button>
+        <button id="mode-camera-btn" type="button">Live camera</button>
+      </div>
+
+      <!-- ── UPLOAD MODE (default — front + back) ─── -->
+      <section id="upload-mode" class="scan-section active">
+        <div class="upload-grid">
+          <label class="upload-card" for="id-front-input">
+            <div class="upload-thumb" id="id-front-thumb">
+              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="10" width="36" height="28" rx="3"/>
+                <circle cx="16" cy="22" r="4"/>
+                <path d="M24 20 L36 20 M24 26 L34 26"/>
+              </svg>
+              <span class="upload-label">Front of ID</span>
+              <span class="upload-hint">Tap to choose photo</span>
+            </div>
+            <input type="file" id="id-front-input" accept="image/*" capture="environment" hidden>
+          </label>
+
+          <label class="upload-card" for="id-back-input">
+            <div class="upload-thumb" id="id-back-thumb">
+              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="10" width="36" height="28" rx="3"/>
+                <path d="M10 30 H38 M10 26 H38 M10 22 H38 M10 18 H38"/>
+              </svg>
+              <span class="upload-label">Back of ID</span>
+              <span class="upload-hint">Has the barcode</span>
+            </div>
+            <input type="file" id="id-back-input" accept="image/*" capture="environment" hidden>
+          </label>
+        </div>
+
+        <div id="upload-status" class="scan-status">
+          <span id="upload-status-text">Add both sides of your ID to continue.</span>
+        </div>
+
+        <div class="phase-actions">
+          <button id="upload-process-btn" class="btn-primary" disabled>Process ID</button>
+          <button id="back-home-btn-2" class="btn-ghost">&larr; Back</button>
+        </div>
+      </section>
+
+      <!-- ── CAMERA MODE (live PDF417 scan, opt-in) ─── -->
+      <section id="camera-mode" class="scan-section">
+        <div class="camera-wrap">
+          <video id="barcode-video" autoplay playsinline muted></video>
+          <canvas id="barcode-proc" hidden></canvas>
+          <div class="scan-frame">
+            <div class="scan-line"></div>
+            <span class="corner tl"></span><span class="corner tr"></span>
+            <span class="corner bl"></span><span class="corner br"></span>
+          </div>
+          <div id="barcode-cam-label" class="cam-status">Looking for a barcode&hellip;</div>
+        </div>
+
+        <div id="barcode-status" class="scan-status">
+          <div id="barcode-spinner" class="spinner"></div>
+          <span id="barcode-status-text">Position the barcode in the frame.</span>
+        </div>
+
+        <div id="barcode-retry-row" class="phase-actions" style="display:none">
+          <button id="retry-barcode-btn" class="btn-primary">Try again</button>
+          <button id="back-home-btn" class="btn-ghost">&larr; Back</button>
+        </div>
+      </section>
+    </section>
+
+    <!-- ─── PHASE 2: LIVENESS CHECK (replaces simple selfie) ─── -->
+    <section id="phase-selfie" class="phase">
+      <header class="phase-head">
+        <h2>Liveness check</h2>
+        <p>Follow the prompts below. We'll match your live face to your ID photo.</p>
+      </header>
+
+      <!-- Pre-start screen: shown until the user taps "Start" -->
+      <div id="liveness-intro" class="liveness-intro">
+        <div class="liveness-intro-icon">🛡️</div>
+        <h3>How this works</h3>
+        <ol class="liveness-steps">
+          <li>You'll see <strong>3 random prompts</strong> like "blink", "smile", or "turn your head".</li>
+          <li>Do each one in front of the camera.</li>
+          <li>We'll capture your face and match it to your ID — all on your device.</li>
+        </ol>
+        <p class="liveness-privacy">
+          🔒 Your video is processed locally. Nothing is uploaded until the check completes.
+        </p>
+        <button id="start-liveness-btn" class="btn-primary btn-lg">Start liveness check</button>
+        <button id="back-to-id-btn" class="btn-ghost">&larr; Back</button>
+      </div>
+
+      <!-- Active liveness session -->
+      <div id="liveness-active" hidden>
+        <div class="camera-wrap selfie-wrap">
+          <video id="selfie-video" autoplay playsinline muted></video>
+          <canvas id="selfie-overlay" class="selfie-overlay"></canvas>
+          <canvas id="selfie-canvas" hidden></canvas>
+        </div>
+
+        <div class="liveness-prompt-card">
+          <div class="liveness-step" id="liveness-step">Step 1 of 3</div>
+          <div class="liveness-icon" id="liveness-icon">👋</div>
+          <div class="liveness-prompt" id="liveness-prompt">Get ready…</div>
+        </div>
+
+        <div class="phase-actions">
+          <button id="cancel-liveness-btn" class="btn-ghost">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Loading state shown while models download (~6MB, first time only) -->
+      <div id="liveness-loading" hidden>
+        <div class="spinner big"></div>
+        <p>Loading face-recognition models… (one-time, ~6MB)</p>
+      </div>
+
+      <!-- Failure state -->
+      <div id="liveness-fail" hidden>
+        <div class="liveness-fail-icon">✗</div>
+        <h3 id="liveness-fail-title">Liveness check failed</h3>
+        <p id="liveness-fail-msg">Please try again.</p>
+        <div class="phase-actions">
+          <button id="retry-liveness-btn" class="btn-primary">Try again</button>
+          <button id="back-to-id-btn-2" class="btn-ghost">&larr; Back</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── PHASE 3: PASS ─── -->
+    <section id="phase-pass" class="phase">
+      <div id="saving-section" class="saving-section">
+        <div class="spinner big"></div>
+        <p>Saving your pass&hellip;</p>
+      </div>
+
+      <div id="pass-section" class="pass-section" style="display:none">
+        <div id="pass-card" class="pass-card">
+          <div class="pass-accent"></div>
+
+          <div class="pass-row top">
+            <div class="brand-small">
+              <img class="brand-mark-img sm" src="favicon.png" alt="" width="22" height="22">
+              <span>Mapleproof</span>
+            </div>
+          </div>
+
+          <div class="pass-verified">
+            <div class="pf-label tiny">Age verified</div>
+            <div class="pf-bigage" id="pass-age-badge">19+</div>
+            <div class="check-circle" aria-hidden="true">
+              <svg viewBox="0 0 32 32"><path d="M9 16 L14 21 L23 11" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <p class="pf-musthecheck"><strong>Must check ID.</strong></p>
+            <p class="pf-subline">Retailer makes the final decision.</p>
+          </div>
+
+          <div class="perforation"></div>
+
+          <div class="pass-barcode-area">
+            <svg id="barcode-svg" class="barcode-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+          </div>
+
+          <div class="perforation"></div>
+
+          <div class="pass-row bottom">
+            <span class="pf-label tiny" id="pass-token-label">ID &middot; &mdash;</span>
+            <span class="pf-thanks">Thank you!</span>
+          </div>
+
+          <div class="pass-meta-row">
+            <img id="pass-face-photo" class="pass-photo" src="" alt="Your registered photo">
+            <div class="pass-meta-grid">
+              <div>
+                <div class="pf-label">Status</div>
+                <div class="pf-value ok" id="pass-status-val">REGISTERED</div>
+              </div>
+              <div>
+                <div class="pf-label">Photo Match</div>
+                <div class="pf-value" id="pass-match-val">&mdash;</div>
+              </div>
+              <div>
+                <div class="pf-label">Issued</div>
+                <div class="pf-value" id="pass-generated">&mdash;</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="duplicate-banner" class="duplicate-banner" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2 L4 6 V12 C4 17 7.5 21 12 22 C16.5 21 20 17 20 12 V6 Z"/>
+            <path d="M9 12 L11 14 L15 10"/>
+          </svg>
+          <span id="duplicate-text"></span>
+        </div>
+
+        <div id="save-error" class="pass-error" hidden></div>
+
+        <div class="phase-actions pass-actions">
+          <button id="download-pass-btn" class="btn-primary">&darr; Download pass</button>
+          <a class="btn-ghost" href="/retailer">Retailer scanner</a>
+          <button id="restart-btn" class="btn-ghost">&#x21bb; New registration</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    Mapleproof &middot; Privacy-first age verification
+  </footer>
+
+  <!-- Browser-side libraries (no server cost): face matching + barcode reading -->
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+  <script src="liveness.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
