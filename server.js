@@ -65,6 +65,7 @@ try {
       face_enc           BLOB NOT NULL,
       id_front_enc       BLOB,
       id_back_enc        BLOB,
+      id_face_enc        BLOB,
       face_match_score   REAL,
       face_match_at      TEXT,
       liveness_verified  INTEGER NOT NULL DEFAULT 0,
@@ -94,6 +95,7 @@ try {
     if (!colNames.includes('dob_enc'))            db.exec('ALTER TABLE customers ADD COLUMN dob_enc BLOB');
     if (!colNames.includes('id_front_enc'))       { db.exec('ALTER TABLE customers ADD COLUMN id_front_enc BLOB'); console.log('[mapleproof] migrated: id_front_enc'); }
     if (!colNames.includes('id_back_enc'))        { db.exec('ALTER TABLE customers ADD COLUMN id_back_enc BLOB'); console.log('[mapleproof] migrated: id_back_enc'); }
+    if (!colNames.includes('id_face_enc'))        { db.exec('ALTER TABLE customers ADD COLUMN id_face_enc BLOB'); console.log('[mapleproof] migrated: id_face_enc'); }
     if (!colNames.includes('face_match_score'))   { db.exec('ALTER TABLE customers ADD COLUMN face_match_score REAL'); console.log('[mapleproof] migrated: face_match_score'); }
     if (!colNames.includes('face_match_at'))      { db.exec('ALTER TABLE customers ADD COLUMN face_match_at TEXT'); console.log('[mapleproof] migrated: face_match_at'); }
     if (!colNames.includes('liveness_verified'))  { db.exec('ALTER TABLE customers ADD COLUMN liveness_verified INTEGER NOT NULL DEFAULT 0'); console.log('[mapleproof] migrated: liveness_verified'); }
@@ -250,9 +252,10 @@ app.post('/api/register', (req, res) => {
       faceImageData,
       idFrontImage,         // optional: data URL of front of ID
       idBackImage,          // optional: data URL of back of ID
-      faceMatchScore,       // optional: 0..1 similarity score from browser-side face-api.js
-      livenessVerified,     // optional: true if user passed liveness challenge
-      livenessChallenges    // optional: array of challenge IDs performed
+      idFaceImage,          // optional: cropped face from front of ID
+      faceMatchScore,       // optional: 0..1 similarity score
+      livenessVerified,
+      livenessChallenges
     } = req.body || {};
 
     if (!idNumber || !dob || !expiry || !faceImageData)
@@ -269,6 +272,8 @@ app.post('/api/register', (req, res) => {
       return res.status(400).json({ ok: false, error: 'idFrontImage must be a data: URL.' });
     if (idBackImage && (typeof idBackImage !== 'string' || !idBackImage.startsWith('data:image/')))
       return res.status(400).json({ ok: false, error: 'idBackImage must be a data: URL.' });
+    if (idFaceImage && (typeof idFaceImage !== 'string' || !idFaceImage.startsWith('data:image/')))
+      return res.status(400).json({ ok: false, error: 'idFaceImage must be a data: URL.' });
     if (idFrontImage && idFrontImage.length > 8_000_000)
       return res.status(413).json({ ok: false, error: 'ID front image too large.' });
     if (idBackImage && idBackImage.length > 8_000_000)
@@ -301,7 +306,7 @@ app.post('/api/register', (req, res) => {
       db.prepare(`
         UPDATE customers
            SET dob_enc = ?, expiry = ?, name_enc = ?, jurisdiction = ?,
-               face_enc = ?, id_front_enc = ?, id_back_enc = ?,
+               face_enc = ?, id_front_enc = ?, id_back_enc = ?, id_face_enc = ?,
                face_match_score = ?, face_match_at = ?,
                liveness_verified = ?, liveness_challenges = ?,
                updated_at = ?, dob = NULL
@@ -310,6 +315,7 @@ app.post('/api/register', (req, res) => {
              encrypt(faceImageData),
              idFrontImage ? encrypt(idFrontImage) : null,
              idBackImage  ? encrypt(idBackImage)  : null,
+             idFaceImage  ? encrypt(idFaceImage)  : null,
              matchScore, matchScore !== null ? now : null,
              liveOk, liveChallengesJson,
              now, token);
@@ -320,15 +326,16 @@ app.post('/api/register', (req, res) => {
       db.prepare(`
         INSERT INTO customers
           (token, id_hash, dob_enc, expiry, name_enc, jurisdiction,
-           face_enc, id_front_enc, id_back_enc,
+           face_enc, id_front_enc, id_back_enc, id_face_enc,
            face_match_score, face_match_at,
            liveness_verified, liveness_challenges,
            registered_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(token, idHash, encrypt(dob), expiry, encrypt(name || ''),
              jurisdiction || '', encrypt(faceImageData),
              idFrontImage ? encrypt(idFrontImage) : null,
              idBackImage  ? encrypt(idBackImage)  : null,
+             idFaceImage  ? encrypt(idFaceImage)  : null,
              matchScore, matchScore !== null ? now : null,
              liveOk, liveChallengesJson,
              now, now);
@@ -371,7 +378,7 @@ app.get('/api/pass/:token', (req, res) => {
       return res.status(400).json({ ok: false, error: 'Invalid barcode format.' });
 
     const row = db.prepare(`
-      SELECT token, dob, dob_enc, expiry, jurisdiction, face_enc,
+      SELECT token, dob, dob_enc, expiry, jurisdiction, face_enc, id_face_enc,
              face_match_score, face_match_at,
              liveness_verified, liveness_challenges,
              registered_at, updated_at, last_seen_at, scan_count
@@ -385,15 +392,14 @@ app.get('/api/pass/:token', (req, res) => {
     const age = calculateAge(dob);
     const exp = expiryStatus(row.expiry);
 
-    // face-api.js euclidean distance: 0 = identical, ~0.6 = different person.
-    // We store similarity (1 - distance), so 1 = identical, 0.4 = different.
-    // Threshold: 0.55+ = strong match, 0.4-0.55 = weak, <0.4 = fail.
+    // Display similarity (browser-side mapping converts face-api distances
+    // to human-friendly 0-1 scale where ~0.85 = strong, 0.65 = good, 0.5 = weak).
     const matchScore = row.face_match_score;
     let matchStatus = 'unknown';
     if (matchScore !== null && matchScore !== undefined) {
-      if (matchScore >= 0.55) matchStatus = 'strong';
-      else if (matchScore >= 0.4) matchStatus = 'weak';
-      else matchStatus = 'fail';
+      if (matchScore >= 0.70)      matchStatus = 'strong';
+      else if (matchScore >= 0.55) matchStatus = 'weak';
+      else                          matchStatus = 'fail';
     }
 
     const livenessVerified = !!row.liveness_verified;
@@ -422,6 +428,7 @@ app.get('/api/pass/:token', (req, res) => {
         expiryDays:       exp.days,
         jurisdiction:     row.jurisdiction || '',
         faceImage:        decrypt(row.face_enc),
+        idFaceImage:      row.id_face_enc ? decrypt(row.id_face_enc) : null,
         faceMatchScore:   matchScore,
         faceMatchStatus:  matchStatus,
         livenessVerified: livenessVerified,

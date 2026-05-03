@@ -125,9 +125,10 @@ const state = {
   faceImageData:  '',
   idFrontImage:   '',
   idBackImage:    '',
+  idCroppedFace:  '',              // cropped face from ID front (for pass card)
   faceMatchScore: null,
-  liveDescriptor: null,            // 128-D face descriptor from liveness check
-  livenessChallenges: null,         // which challenges were performed (for audit)
+  liveDescriptor: null,
+  livenessChallenges: null,
   token:          '',
   parsed: { idNumber: '', dob: '', expiry: '', name: '', jurisdiction: '' },
   serverPublicRecord: null
@@ -758,8 +759,8 @@ async function runLivenessFlow() {
       hintEl:     document.getElementById('liveness-hint'),
       manualBtn:  document.getElementById('liveness-manual-btn'),
       manualBtnDelay:      6000,
-      challengeCount:      2,
-      timeoutPerChallenge: 20000
+      challengeCount:      4,        // full 360 head sequence (left, right, up, down)
+      timeoutPerChallenge: 18000
     });
   } catch (err) {
     console.error('[liveness] error:', err);
@@ -904,9 +905,10 @@ async function saveAndGeneratePass() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...state.parsed,
-        faceImageData:  croppedLiveFace,                    // cropped live face
-        idFrontImage:   state.idFrontImage  || undefined,   // full original (for audit)
+        faceImageData:  croppedLiveFace,                    // cropped live face for pass display
+        idFrontImage:   state.idFrontImage  || undefined,   // full ID front (for audit)
         idBackImage:    state.idBackImage   || undefined,
+        idFaceImage:    croppedIdFace || undefined,         // cropped ID face for pass display
         faceMatchScore: matchScore,
         livenessVerified:   !!state.liveDescriptor,
         livenessChallenges: state.livenessChallenges || undefined
@@ -934,9 +936,20 @@ async function saveAndGeneratePass() {
       fontFamily: 'JetBrains Mono, monospace'
     });
 
-    // Pass photo = the CROPPED live face (no background, no ID text)
-    state.faceImageData = croppedLiveFace;  // also update so download uses cropped
+    // Twin photos on pass card: LIVE + ID
+    state.faceImageData = croppedLiveFace;       // download uses cropped live
+    state.idCroppedFace = croppedIdFace || null; // download will also use this
     document.getElementById('pass-face-photo').src = croppedLiveFace;
+    const idPhotoEl = document.getElementById('pass-id-photo');
+    if (idPhotoEl) {
+      if (croppedIdFace) {
+        idPhotoEl.src = croppedIdFace;
+        idPhotoEl.style.display = '';
+      } else {
+        // No ID face crop available — hide the ID slot gracefully
+        idPhotoEl.style.display = 'none';
+      }
+    }
     document.getElementById('pass-status-val').textContent   = `REGISTERED · ${pub.ageBadge}`;
 
     // Photo-match indicator on the pass card
@@ -945,11 +958,11 @@ async function saveAndGeneratePass() {
       matchEl.classList.remove('match-strong', 'match-weak', 'match-fail');
       if (matchScore === null || matchScore === undefined) {
         matchEl.textContent = 'Skipped';
-      } else if (matchScore >= 0.55) {
+      } else if (matchScore >= 0.70) {
         matchEl.textContent = `${Math.round(matchScore * 100)}% ✓`;
         matchEl.classList.add('match-strong');
-      } else if (matchScore >= 0.4) {
-        matchEl.textContent = `${Math.round(matchScore * 100)}% (weak)`;
+      } else if (matchScore >= 0.55) {
+        matchEl.textContent = `${Math.round(matchScore * 100)}% (review)`;
         matchEl.classList.add('match-weak');
       } else {
         matchEl.textContent = `${Math.round(matchScore * 100)}% (low)`;
@@ -1091,39 +1104,79 @@ document.getElementById('download-pass-btn').addEventListener('click', async () 
 });
 
 function drawPhotoAndMeta(ctx, done) {
-  const x = 70, y = 770, w = 110, h = 110;
+  // Twin photos: LIVE (left) + ID (right) — labeled
+  const photoSize = 100;
+  const gap = 24;
+  const totalW = photoSize * 2 + gap;
+  const startX = (840 - totalW) / 2;  // center horizontally on 840px-wide canvas
+  const y = 770;
+
+  // Labels
+  ctx.fillStyle = '#1f6f48';
+  ctx.font = '700 10px JetBrains Mono, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('LIVE PHOTO', startX + photoSize / 2, y - 8);
+  ctx.fillText('ID PHOTO',   startX + photoSize + gap + photoSize / 2, y - 8);
+  ctx.textAlign = 'left';
+
+  // Frames
   ctx.strokeStyle = '#e0eae3';
   ctx.lineWidth   = 2;
-  roundRect(ctx, x, y, w, h, 14, false, true);
+  roundRect(ctx, startX, y, photoSize, photoSize, 12, false, true);
+  roundRect(ctx, startX + photoSize + gap, y, photoSize, photoSize, 12, false, true);
 
+  // Status text below the photos
+  const metaY = y + photoSize + 20;
   ctx.fillStyle = '#5a7c66';
-  ctx.font = '500 11px JetBrains Mono, monospace';
-  ctx.fillText('ID EXPIRES', x + w + 22, y + 28);
-  ctx.fillStyle = '#0d2418';
-  ctx.font = '500 18px Fraunces, Georgia, serif';
-  ctx.fillText(formatDate(state.serverPublicRecord?.expiry || state.parsed.expiry), x + w + 22, y + 56);
+  ctx.font = '500 10px JetBrains Mono, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('REGISTERED · ' + (state.serverPublicRecord?.ageBadge || '19+'),
+               420, metaY);
+  ctx.textAlign = 'left';
 
-  ctx.fillStyle = '#5a7c66';
-  ctx.font = '500 11px JetBrains Mono, monospace';
-  ctx.fillText('STATUS', x + w + 22, y + 82);
-  ctx.fillStyle = '#2d8a3e';
-  ctx.font = '600 16px Inter, sans-serif';
-  ctx.fillText(`REGISTERED · ${state.serverPublicRecord?.ageBadge || '19+'}`, x + w + 22, y + 104);
-
-  if (state.faceImageData) {
-    const face = new Image();
-    face.onload = () => {
-      ctx.save();
-      roundRectClip(ctx, x, y, w, h, 14);
-      ctx.drawImage(face, x, y, w, h);
-      ctx.restore();
-      done();
-    };
-    face.onerror = done;
-    face.src = state.faceImageData;
-  } else {
-    done();
+  let pendingLoads = 0;
+  function maybeDone() {
+    if (--pendingLoads <= 0) done();
   }
+
+  // Draw live photo (left)
+  if (state.faceImageData) {
+    pendingLoads++;
+    const live = new Image();
+    live.onload = () => {
+      ctx.save();
+      roundRectClip(ctx, startX, y, photoSize, photoSize, 12);
+      ctx.drawImage(live, startX, y, photoSize, photoSize);
+      ctx.restore();
+      maybeDone();
+    };
+    live.onerror = maybeDone;
+    live.src = state.faceImageData;
+  }
+
+  // Draw ID photo (right)
+  if (state.idCroppedFace) {
+    pendingLoads++;
+    const idF = new Image();
+    idF.onload = () => {
+      ctx.save();
+      roundRectClip(ctx, startX + photoSize + gap, y, photoSize, photoSize, 12);
+      ctx.drawImage(idF, startX + photoSize + gap, y, photoSize, photoSize);
+      ctx.restore();
+      maybeDone();
+    };
+    idF.onerror = maybeDone;
+    idF.src = state.idCroppedFace;
+  } else {
+    // Show "—" placeholder if no ID face was cropped
+    ctx.fillStyle = '#bdc8c2';
+    ctx.font = '600 24px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('—', startX + photoSize + gap + photoSize / 2, y + photoSize / 2 + 8);
+    ctx.textAlign = 'left';
+  }
+
+  if (pendingLoads === 0) done();
 }
 
 function roundRect(ctx, x, y, w, h, r, fill, stroke) {
@@ -1159,6 +1212,7 @@ document.getElementById('restart-btn').addEventListener('click', () => {
   state.faceImageData      = '';
   state.idFrontImage       = '';
   state.idBackImage        = '';
+  state.idCroppedFace      = '';
   state.faceMatchScore     = null;
   state.liveDescriptor     = null;
   state.livenessChallenges = null;

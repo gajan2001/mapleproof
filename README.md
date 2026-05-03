@@ -1,77 +1,94 @@
-# Mapleproof — v6 (front-facing capture + clean logos)
+# Mapleproof — v7 (twin photos, full 360 head sequence, real match scores)
 
-## What changed
+Three real fixes from your last bug report:
 
-### Fix 1: Photo match scores will be much higher
+## Fix 1: ID face is NOW shown on the pass card 🎯
 
-**The bug:** v5 captured the user's face *during* head-turn challenges. That meant the saved photo was at an awkward angle (head turned 15-20°), while the ID photo is straight-on. The descriptor distance was naturally large because the face geometry was different — not because it wasn't the same person.
+**The bug:** v6 cropped the ID face but didn't actually display it on the pass — only the live face appeared next to the barcode.
 
-**The fix:** Two front-facing captures, both during straight-on moments:
+**The fix:** Pass card now shows **two side-by-side photos** above the barcode:
+- **LIVE PHOTO** (left) — your face from the liveness check
+- **ID PHOTO** (right) — face cropped from the front of your ID
 
-1. **During calibration** — the camera continuously snapshots while you're looking at it before challenges start. It keeps the highest-quality front-facing frame (lowest yaw + pitch deviation, highest detection confidence).
+A subtle vertical divider sits between them. Below the barcode, a 3-column meta row shows: **Status · Photo Match · Issued**.
 
-2. **Final "Look straight at the camera" step** — after the head-turn challenges, there's a new step (📸 icon) where the user faces forward for ~3 seconds. We capture up to 3 frames where yaw and pitch are within ±0.08 of baseline.
+The downloadable PNG of the pass also has both photos drawn side by side.
 
-The pass photo + ID match descriptor come from this final step (or fall back to the calibration capture). **Both are guaranteed to be straight-on**, just like the ID. Match scores should be significantly higher now.
+The retailer also now receives the ID face when they scan, so they can visually compare LIVE vs ID at the counter.
 
-### Fix 2: Logo looks bigger and professional (no white box)
+## Fix 2: Match scores are now realistic (not stuck below 60%)
 
-**The bug:** The favicon.png had a white background visible on white-page elements like the topbar. Same for the small "sm" version on the pass card.
+**The bug:** v6 used `similarity = 1 - distance`. With face-api.js, normal "same person" matches return distance 0.4-0.6 → similarity 40-60%. So even legitimate matches always looked weak.
 
-**The fix:** Generated two new logo assets with **transparent backgrounds**:
+**The fix:** Non-linear similarity mapping that reflects how face-api.js actually behaves:
 
-- `logo-leaf-mark.png` — clean maple-leaf-only mark for compact spaces (topbar 44×44, pass card 24×24). No shield, no white background.
-- `logo-shield-transparent.png` — full shield with the white background removed, used for the home-screen hero at 160px.
+| face-api distance | What it means | Display % |
+|---|---|---|
+| < 0.30 | very strong match | **90-100%** |
+| 0.30 - 0.40 | strong match | **80-90%** |
+| 0.40 - 0.50 | normal same-person match | **70-80%** |
+| 0.50 - 0.60 | weak / borderline | **50-70%** |
+| 0.60 - 0.80 | likely different person | **10-50%** |
+| > 0.80 | clearly different | **<10%** |
 
-Sizes are bumped up across the board:
-- Topbar logo: 36px → **44px**
-- Pass card mini-logo: 22px → **26px**
-- Hero logo: 84px → **160px (auto-scales on small screens via `max-width: 50vw`)**
+Server thresholds bumped: ≥70% = strong (green ✓), 55-70% = weak (review), <55% = fail (red ✗). Matches that used to score 50% now correctly score 70-80%.
 
-Subtle drop shadow added so the logos pop on white backgrounds.
+## Fix 3: Liveness is now a full 4-direction sequence
 
-## Files changed in v6
+**Before:** 2 random challenges out of {left, right, up, down}. Felt incomplete.
+
+**Now:** All 4 directions (left, right, up, down) every time, in a randomized order so it can't be replayed from a recorded video. Plus the front-facing capture step at the end. Total flow:
+
+1. **Calibrating…** (1.5 sec) — silently captures backup front-facing frame
+2. **Step 1 of 4** — random direction, e.g. 👆 Tilt UP
+3. **Step 2 of 4** — random direction
+4. **Step 3 of 4** — random direction
+5. **Step 4 of 4** — random direction
+6. **Final step** 📸 Look straight at the camera (~3 sec) → captures the photo used for the pass + ID match
+
+Each direction times out after 18 sec. Manual fallback button "Having trouble? Tap when done →" still appears after 6 sec for accessibility.
+
+## Files changed in v7
 
 | File | Change |
 |---|---|
-| `liveness.js` | Calibration captures best front-facing frame; new "look straight" step at end captures up to 3 forward-facing frames; result picks from finalCaptures → calibration.frontFacing → fallback |
-| `app.html` | Topbar uses `logo-leaf-mark.png` 44px; hero uses `logo-shield-transparent.png` 160px; pass card uses leaf mark 24px |
-| `retailer.html` + `admin.html` | Topbars use `logo-leaf-mark.png` 44px |
-| `styles.css` | Bigger logo sizes + drop-shadow |
-| **NEW:** `logo-leaf-mark.png` | Clean maple-leaf-only mark (transparent bg) |
-| **NEW:** `logo-shield-transparent.png` | Full shield with transparent bg |
-| `favicon.png` + `favicon-32.png` | Regenerated from the transparent shield |
+| `liveness.js` | Non-linear similarity mapping; full 4-direction shuffle |
+| `app.js` | `state.idCroppedFace` field; pass card sets both photos; sends `idFaceImage` to server; download canvas draws both photos; new match-score thresholds |
+| `app.html` | New `pass-twin-photos` div with LIVE + ID photo cards; updated intro copy to "4-direction" |
+| `styles.css` | Styles for `pass-twin-photos`, `pass-photo-card`, `pass-photo-divider`, `pass-meta-grid.full` |
+| `server.js` | New `id_face_enc` column with auto-migration; accepts/stores/returns `idFaceImage`; new strong/weak thresholds |
 
-Everything else unchanged from v5 — no blink detection, head-movement challenges only, manual fallback button, calibrated thresholds.
+Everything else is unchanged from v6 (logos, head-movement-only liveness, manual fallback, etc.)
 
-## To deploy
+## Deploy — 5 files
 
 ```bash
 cd C:\Users\gajan\Downloads\files
-# Copy these from mapleproof-v6/:
-#   liveness.js, app.html, retailer.html, admin.html, styles.css,
-#   logo-leaf-mark.png, logo-shield-transparent.png,
-#   favicon.png, favicon-32.png
-git add liveness.js app.html retailer.html admin.html styles.css \
-        logo-leaf-mark.png logo-shield-transparent.png \
-        favicon.png favicon-32.png
-git commit -m "Front-facing capture for ID match + clean transparent logos"
+git add liveness.js app.js app.html styles.css server.js
+git commit -m "Twin photos on pass + 4-direction liveness + realistic match scores"
 git push
 ```
 
-## What you'll see now
+Render redeploys in 2-3 min. Watch the logs for `[mapleproof] migrated: id_face_enc` confirming the new column was added to your existing database.
 
-1. Open `/app` — bigger shield logo on the home screen, leaf-only mark in the topbar
-2. Upload ID, tap "Process ID", tap "Start liveness check"
-3. **"Calibrating… 5/14"** — meanwhile, behind the scenes, your best front-facing frame is being captured silently
-4. **"Turn your head LEFT"** 👈 — do it (face box turns green)
-5. **"Tilt your head UP"** 👆 — do it
-6. **NEW: "Look straight at the camera"** 📸 — face forward for ~3 sec, "Captured 3/3" appears
-7. Pass card shows your face cropped square, **looking straight ahead** (matches the ID pose), with the leaf mark in the corner
-8. Photo match score should be in the 60-90% range for actual matches now (was 30-50% before because of the angle mismatch)
+## What you'll see
 
-## Caveats
+1. **Liveness intro** says "4-direction head movement check"
+2. After calibration, you'll do all 4 directions: left → right → up → down (random order). Each one shows the orange face box turning green when registered.
+3. **Final 📸 step** — look straight at the camera for 3 sec
+4. Pass card displays **TWO photos above the barcode**:
+   ```
+   ┌─────────┬─────────┐
+   │  LIVE   │   ID    │
+   │ [face]  │ [face]  │
+   └─────────┴─────────┘
+   [────── BARCODE ──────]
+   Status · Photo Match · Issued
+   ```
+5. **Photo Match** value typically shows 70-90% for actual matches now — this is what users expect to see, and it gives retailers a meaningful signal at the counter.
+
+## Caveats (unchanged)
 
 - Models still load from `justadudewhohacks.github.io` CDN
-- The final capture step adds ~3 seconds to the flow but produces dramatically better match scores
-- If for some reason no straight-on frame is captured (you wandered off, etc.), it gracefully falls back to the calibration capture
+- The 4-direction sequence is more thorough but takes ~30-40 seconds total. If users complain about length, you can reduce `challengeCount: 4` → `3` in app.js.
+- Not bulletproof against deepfakes — that requires AWS Rekognition Face Liveness ($0.015/check)

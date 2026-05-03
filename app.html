@@ -152,9 +152,9 @@
         <div class="liveness-intro-icon">🛡️</div>
         <h3>How this works</h3>
         <ol class="liveness-steps">
-          <li>You'll see <strong>2 random prompts</strong> like "turn left" or "tilt up".</li>
-          <li>Do each one slowly in front of the camera.</li>
-          <li>We'll capture your face and match it to your ID — all on your device.</li>
+          <li>You'll do a <strong>4-direction head movement check</strong> (left, right, up, down).</li>
+          <li>Move slowly — the face box on screen will turn green when each direction registers.</li>
+          <li>Then face the camera straight on for a final photo capture.</li>
         </ol>
         <p class="liveness-privacy">
           🔒 Your video is processed locally. Nothing is uploaded until the check completes.
@@ -232,6 +232,19 @@
             <p class="pf-subline">Retailer makes the final decision.</p>
           </div>
 
+          <!-- Twin-photo row: LIVE face + ID face side by side -->
+          <div class="pass-twin-photos">
+            <div class="pass-photo-card">
+              <div class="pass-photo-label">LIVE PHOTO</div>
+              <img id="pass-face-photo" class="pass-photo-img" src="" alt="Live photo">
+            </div>
+            <div class="pass-photo-divider"></div>
+            <div class="pass-photo-card">
+              <div class="pass-photo-label">ID PHOTO</div>
+              <img id="pass-id-photo" class="pass-photo-img" src="" alt="ID photo">
+            </div>
+          </div>
+
           <div class="perforation"></div>
 
           <div class="pass-barcode-area">
@@ -245,9 +258,8 @@
             <span class="pf-thanks">Thank you!</span>
           </div>
 
-          <div class="pass-meta-row">
-            <img id="pass-face-photo" class="pass-photo" src="" alt="Your registered photo">
-            <div class="pass-meta-grid">
+          <div class="pass-meta-row compact">
+            <div class="pass-meta-grid full">
               <div>
                 <div class="pf-label">Status</div>
                 <div class="pf-value ok" id="pass-status-val">REGISTERED</div>

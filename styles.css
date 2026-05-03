@@ -1305,3 +1305,51 @@ img, svg, video, canvas { max-width: 100%; display: block; }
   font-size: 13px;
   padding: 8px 14px;
 }
+
+/* ───────── PASS CARD — TWIN PHOTOS ───────── */
+.pass-twin-photos {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 18px 22px 6px;
+  background: #f9fbf9;
+}
+.pass-photo-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.pass-photo-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #1f6f48;
+}
+.pass-photo-img {
+  width: 100%;
+  max-width: 130px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 2px solid #e2ebe5;
+  background: #fff;
+}
+.pass-photo-divider {
+  width: 1px;
+  height: 90px;
+  background: linear-gradient(to bottom, transparent, #cfd8d2, transparent);
+}
+.pass-meta-row.compact {
+  padding: 12px 22px 18px;
+}
+.pass-meta-grid.full {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  width: 100%;
+}
+.pass-meta-grid.full > div {
+  text-align: center;
+}

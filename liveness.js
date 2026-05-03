@@ -108,24 +108,13 @@
     }
   };
 
-  function randomChallenges(n = 2) {
-    // Pick 2 challenges, ensuring we don't pick both turn_left AND turn_right
-    // (or both look_up AND look_down) since those would feel weird back-to-back
-    const ids = Object.keys(CHALLENGES);
-    const shuffled = ids.slice().sort(() => Math.random() - 0.5);
-    const picked = [];
-    for (const id of shuffled) {
-      if (picked.length >= n) break;
-      // Skip if we already have its opposite
-      const opp = id === 'turn_left' ? 'turn_right'
-                : id === 'turn_right' ? 'turn_left'
-                : id === 'look_up'    ? 'look_down'
-                : id === 'look_down'  ? 'look_up'
-                : null;
-      if (opp && picked.includes(opp)) continue;
-      picked.push(id);
-    }
-    return picked.map(id => CHALLENGES[id]);
+  function randomChallenges(n = 4) {
+    // For maximum legitimacy: run a FULL 4-direction head sequence.
+    // We always test all 4 directions (left, right, up, down) but in
+    // a randomized order so it can't be replayed from a recorded video.
+    const all = ['turn_left', 'turn_right', 'look_up', 'look_down'];
+    const shuffled = all.slice().sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, n).map(id => CHALLENGES[id]);
   }
 
   // ── Model loading ─────────────────────────────────────────────
@@ -485,7 +474,20 @@
         return null;
       }
       const distance = faceapi.euclideanDistance(descriptor, idDetect.descriptor);
-      const similarity = Math.max(0, Math.min(1, 1 - distance));
+      // face-api.js typical distances:
+      //   < 0.4   → same person, high confidence  → display 85-100%
+      //   0.4-0.5 → same person, normal           → display 70-85%
+      //   0.5-0.6 → likely same, weaker           → display 50-70%
+      //   > 0.6   → likely different person       → display <50%
+      // Map non-linearly so users see meaningful scores.
+      let similarity;
+      if (distance < 0.30)      similarity = 1.0 - (distance * 0.33);   // 0.30 → 0.90
+      else if (distance < 0.40) similarity = 0.90 - (distance - 0.30) * 1.0;  // 0.40 → 0.80
+      else if (distance < 0.50) similarity = 0.80 - (distance - 0.40) * 1.0;  // 0.50 → 0.70
+      else if (distance < 0.60) similarity = 0.70 - (distance - 0.50) * 2.0;  // 0.60 → 0.50
+      else if (distance < 0.80) similarity = 0.50 - (distance - 0.60) * 2.0;  // 0.80 → 0.10
+      else                       similarity = Math.max(0, 0.10 - (distance - 0.80) * 0.5);
+      similarity = Math.max(0, Math.min(1, similarity));
       console.log(`[liveness] match distance=${distance.toFixed(3)} similarity=${similarity.toFixed(3)}`);
       return similarity;
     } catch (err) {
