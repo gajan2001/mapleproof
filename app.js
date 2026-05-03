@@ -756,8 +756,10 @@ async function runLivenessFlow() {
       iconEl:     document.getElementById('liveness-icon'),
       stepEl:     document.getElementById('liveness-step'),
       hintEl:     document.getElementById('liveness-hint'),
-      challengeCount: 3,
-      timeoutPerChallenge: 15000
+      manualBtn:  document.getElementById('liveness-manual-btn'),
+      manualBtnDelay:      6000,
+      challengeCount:      2,
+      timeoutPerChallenge: 20000
     });
   } catch (err) {
     console.error('[liveness] error:', err);

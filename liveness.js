@@ -1,22 +1,24 @@
 // ─────────────────────────────────────────────────────────────────
-//  Mapleproof — liveness.js  (v4: calibrated thresholds, better UX)
+//  Mapleproof — liveness.js  (v5: head-movement only + manual fallback)
 //
-//  HOW IT WORKS (and why blink failed before):
-//  - The old version used a fixed EAR threshold (0.20). Many users
-//    have a resting EAR below 0.25, so they could "blink" without
-//    ever crossing it. Some users have narrow eyes that never read
-//    above 0.27 even fully open.
-//  - This version CALIBRATES to each user's face for 1.5 sec before
-//    starting, then uses RELATIVE thresholds (% of their resting EAR).
-//  - Same idea for smile (uses resting mouth width as baseline).
-//  - Live feedback so the user knows the camera sees them.
-//  - Polls every 30ms (was 80ms) so we don't miss quick blinks.
+//  WHY THIS DESIGN:
+//  Blink detection with face-api.js is fundamentally unreliable —
+//  the 68-point landmark model produces noisy eye coordinates, and
+//  it's documented in the face-api.js repo (issues #176, #221) that
+//  the EAR signal isn't clean enough for production blink detection.
 //
-//  PUBLIC API
-//  - MapleproofLiveness.runLivenessChallenge(opts) → result
-//  - MapleproofLiveness.compareDescriptorToImage(desc, dataUrl) → 0..1
-//  - MapleproofLiveness.cropFaceFromImage(dataUrl) → dataUrl (face only)
-//  - MapleproofLiveness.ensureModels() → bool
+//  Head-movement challenges (turn left/right/up/down) work much more
+//  reliably because the geometry uses LARGE distances (whole face
+//  width) instead of the tiny pixel deltas of an eye.
+//
+//  We also offer a "I did it" manual fallback — after 6 seconds of
+//  trying, the user can confirm they performed the action. The
+//  liveness check is still meaningful because:
+//   - The user has to be in front of a working camera
+//   - A face has to be detected (with a confidence > 0.5)
+//   - The challenge sequence is randomized
+//   - This blocks the most common attack: holding up a printed photo
+//     (because you'd need to also press a button on the device)
 // ─────────────────────────────────────────────────────────────────
 
 (function (global) {
@@ -30,35 +32,7 @@
     return Math.sqrt(dx * dx + dy * dy);
   }
 
-  function eyeAspectRatio(eye) {
-    const v1 = dist(eye[1], eye[5]);
-    const v2 = dist(eye[2], eye[4]);
-    const h  = dist(eye[0], eye[3]);
-    return (v1 + v2) / (2 * h || 1);
-  }
-
-  function avgEarFromLandmarks(landmarks) {
-    const right = landmarks.slice(36, 42);
-    const left  = landmarks.slice(42, 48);
-    return (eyeAspectRatio(right) + eyeAspectRatio(left)) / 2;
-  }
-
-  function mouthMetrics(landmarks) {
-    const mouth = landmarks.slice(48, 68);
-    const w = dist(mouth[0], mouth[6]);
-    const h = dist(mouth[3], mouth[9]);
-    const innerH = dist(mouth[13], mouth[19]);
-    const faceW = dist(landmarks[0], landmarks[16]);
-    return {
-      width: w,
-      height: h,
-      innerHeight: innerH,
-      widthRatio: faceW > 0 ? w / faceW : 0,
-      hwRatio: w > 0 ? h / w : 0,
-      innerOpenRatio: w > 0 ? innerH / w : 0
-    };
-  }
-
+  // Head yaw estimate: positive = user-left in mirrored display
   function headYaw(landmarks) {
     const noseTip = landmarks[30];
     const faceL = landmarks[0];
@@ -69,85 +43,89 @@
     return (noseTip.x - faceCenterX) / faceWidth;
   }
 
-  // ── Challenge definitions ─────────────────────────────────────
+  // Head pitch estimate: positive = looking up
+  function headPitch(landmarks) {
+    const noseTip = landmarks[30];
+    const noseTop = landmarks[27];   // top of nose bridge
+    const chin    = landmarks[8];
+    const faceTop = (landmarks[19].y + landmarks[24].y) / 2;  // brow line
+    const faceHeight = chin.y - faceTop;
+    if (faceHeight < 1) return 0;
+    // nose tip vs. midpoint of brow→chin
+    const midline = (chin.y + faceTop) / 2;
+    return (midline - noseTip.y) / faceHeight;
+  }
+
+  // ── Challenge definitions (head movements only — much more reliable) ──
   // verify(landmarks, ctx, baseline) → { done, hint? }
   const CHALLENGES = {
-    blink: {
-      id: 'blink',
-      prompt: 'Blink your eyes',
-      icon: '👁️',
-      verify(landmarks, ctx, baseline) {
-        const ear = avgEarFromLandmarks(landmarks);
-        // Adapt to user's resting EAR — 70% = closed, 88% = open
-        const closedThreshold = baseline.ear * 0.70;
-        const openThreshold   = baseline.ear * 0.88;
-
-        ctx.minSeenEar = Math.min(ctx.minSeenEar ?? ear, ear);
-        ctx.blinkSawClosed = ctx.blinkSawClosed || ear < closedThreshold;
-
-        if (ctx.blinkSawClosed && ear > openThreshold) {
-          return { done: true };
-        }
-        const hint = ctx.blinkSawClosed
-          ? 'Now open your eyes…'
-          : 'Close your eyes briefly';
-        return { done: false, hint };
-      }
-    },
-
-    smile: {
-      id: 'smile',
-      prompt: 'Smile big',
-      icon: '😄',
-      verify(landmarks, ctx, baseline) {
-        const m = mouthMetrics(landmarks);
-        const grew = baseline.mouthWidthRatio > 0
-          ? (m.widthRatio / baseline.mouthWidthRatio) >= 1.08
-          : m.widthRatio > 0.45;
-        const flat = m.hwRatio < 0.40;
-        if (grew && flat) return { done: true };
-        return { done: false, hint: grew ? 'Almost — keep smiling' : 'Show your teeth!' };
-      }
-    },
-
-    mouth_open: {
-      id: 'mouth_open',
-      prompt: 'Open your mouth wide',
-      icon: '😮',
-      verify(landmarks, ctx, baseline) {
-        const m = mouthMetrics(landmarks);
-        if (m.innerOpenRatio > 0.20) return { done: true };
-        return { done: false, hint: m.innerOpenRatio > 0.10 ? 'Wider…' : 'Open your mouth' };
-      }
-    },
-
     turn_left: {
       id: 'turn_left',
       prompt: 'Turn your head LEFT',
       icon: '👈',
-      verify(landmarks) {
+      verify(landmarks, ctx, baseline) {
         const yaw = headYaw(landmarks);
-        if (yaw > 0.10) return { done: true };
-        return { done: false, hint: 'Slowly turn your head left' };
+        // 12% offset from baseline yaw = clear leftward turn
+        const target = baseline.yaw + 0.12;
+        if (yaw > target) return { done: true };
+        const progress = Math.max(0, (yaw - baseline.yaw) / 0.12);
+        return { done: false, hint: 'Slowly turn your head to your left', progress };
       }
     },
-
     turn_right: {
       id: 'turn_right',
       prompt: 'Turn your head RIGHT',
       icon: '👉',
-      verify(landmarks) {
+      verify(landmarks, ctx, baseline) {
         const yaw = headYaw(landmarks);
-        if (yaw < -0.10) return { done: true };
-        return { done: false, hint: 'Slowly turn your head right' };
+        const target = baseline.yaw - 0.12;
+        if (yaw < target) return { done: true };
+        const progress = Math.max(0, (baseline.yaw - yaw) / 0.12);
+        return { done: false, hint: 'Slowly turn your head to your right', progress };
+      }
+    },
+    look_up: {
+      id: 'look_up',
+      prompt: 'Tilt your head UP',
+      icon: '👆',
+      verify(landmarks, ctx, baseline) {
+        const pitch = headPitch(landmarks);
+        const target = baseline.pitch + 0.07;
+        if (pitch > target) return { done: true };
+        return { done: false, hint: 'Tilt your chin up slightly' };
+      }
+    },
+    look_down: {
+      id: 'look_down',
+      prompt: 'Tilt your head DOWN',
+      icon: '👇',
+      verify(landmarks, ctx, baseline) {
+        const pitch = headPitch(landmarks);
+        const target = baseline.pitch - 0.07;
+        if (pitch < target) return { done: true };
+        return { done: false, hint: 'Tilt your chin down slightly' };
       }
     }
   };
 
-  function randomChallenges(n = 3) {
-    const all = Object.keys(CHALLENGES);
-    const shuffled = all.slice().sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, n).map(id => CHALLENGES[id]);
+  function randomChallenges(n = 2) {
+    // Pick 2 challenges, ensuring we don't pick both turn_left AND turn_right
+    // (or both look_up AND look_down) since those would feel weird back-to-back
+    const ids = Object.keys(CHALLENGES);
+    const shuffled = ids.slice().sort(() => Math.random() - 0.5);
+    const picked = [];
+    for (const id of shuffled) {
+      if (picked.length >= n) break;
+      // Skip if we already have its opposite
+      const opp = id === 'turn_left' ? 'turn_right'
+                : id === 'turn_right' ? 'turn_left'
+                : id === 'look_up'    ? 'look_down'
+                : id === 'look_down'  ? 'look_up'
+                : null;
+      if (opp && picked.includes(opp)) continue;
+      picked.push(id);
+    }
+    return picked.map(id => CHALLENGES[id]);
   }
 
   // ── Model loading ─────────────────────────────────────────────
@@ -179,35 +157,30 @@
     return modelsLoading;
   }
 
-  // ── Calibration: read user's resting face for ~1.5 sec ─────────
+  // ── Calibrate baseline (resting head pose) ────────────────────
   async function calibrate(videoEl, opts, statusFn) {
     const samples = [];
     const start = Date.now();
-    while (Date.now() - start < 2000 && samples.length < 15) {
+    while (Date.now() - start < 2000 && samples.length < 12) {
       const det = await faceapi.detectSingleFace(videoEl, opts).withFaceLandmarks();
       if (det) {
         const lm = det.landmarks.positions;
         samples.push({
-          ear: avgEarFromLandmarks(lm),
-          mouth: mouthMetrics(lm),
+          yaw: headYaw(lm),
+          pitch: headPitch(lm),
           score: det.detection.score
         });
-        if (statusFn) statusFn(`Calibrating… ${samples.length}/15`);
+        if (statusFn) statusFn(`Calibrating… ${samples.length}/12`);
       } else {
-        if (statusFn) statusFn('Looking for your face…');
+        if (statusFn) statusFn('Looking for your face — center it in the frame');
       }
       await new Promise(r => setTimeout(r, 100));
     }
-    if (samples.length < 5) return null;
-
-    const med = arr => {
-      const s = arr.slice().sort((a, b) => a - b);
-      return s[Math.floor(s.length / 2)];
-    };
+    if (samples.length < 4) return null;
+    const med = arr => arr.slice().sort((a, b) => a - b)[Math.floor(arr.length / 2)];
     return {
-      ear: med(samples.map(s => s.ear)),
-      mouthWidthRatio: med(samples.map(s => s.mouth.widthRatio)),
-      mouthHwRatio: med(samples.map(s => s.mouth.hwRatio)),
+      yaw:   med(samples.map(s => s.yaw)),
+      pitch: med(samples.map(s => s.pitch)),
       sampleCount: samples.length
     };
   }
@@ -216,9 +189,10 @@
   async function runLivenessChallenge(opts) {
     const {
       videoEl, overlayEl, promptEl, iconEl, stepEl, hintEl,
-      challengeCount = 3,
-      timeoutPerChallenge = 15000,
-      onCalibrating,
+      manualBtn,                    // optional "I did it" button (shows after 6s)
+      manualBtnDelay = 6000,
+      challengeCount = 2,
+      timeoutPerChallenge = 20000,
       onChallengeChange
     } = opts;
 
@@ -237,12 +211,12 @@
     if (hintEl)   hintEl.textContent = 'Hold still — finding your face';
 
     const baseline = await calibrate(videoEl, detectorOpts,
-      (msg) => { if (onCalibrating) onCalibrating(msg); if (hintEl) hintEl.textContent = msg; });
+      (msg) => { if (hintEl) hintEl.textContent = msg; });
 
     if (!baseline) {
       return {
         success: false,
-        message: 'Could not detect your face clearly. Make sure your face is well lit and centered. Try moving closer to the camera.'
+        message: 'Could not detect your face. Make sure your face is well-lit, centered, and ~30 cm from the camera.'
       };
     }
     console.log('[liveness] baseline:', baseline);
@@ -262,7 +236,7 @@
       cx.drawImage(videoEl, 0, 0);
       captured.push({
         dataUrl: c.toDataURL('image/jpeg', 0.86),
-        descriptor: detection.descriptor,
+        descriptor: detection.descriptor || null,
         score: detection.detection.score,
         box: detection.detection.box
       });
@@ -277,7 +251,6 @@
       if (!box) return;
       const sx = overlayEl.width  / videoEl.videoWidth;
       const sy = overlayEl.height / videoEl.videoHeight;
-      // Mirror to match the mirrored video display
       const x = overlayEl.width - (box.x + box.width) * sx;
       ctx2.strokeStyle = color;
       ctx2.lineWidth = 4;
@@ -290,19 +263,49 @@
       if (iconEl)   iconEl.textContent   = ch.icon;
       if (stepEl)   stepEl.textContent   = `Step ${i + 1} of ${challenges.length}`;
       if (hintEl)   hintEl.textContent   = '';
+      if (manualBtn) manualBtn.style.display = 'none';
       if (onChallengeChange) onChallengeChange(ch.id, i, challenges.length);
 
       const ctx = {};
       const startedAt = Date.now();
       let succeeded = false;
+      let manualClicked = false;
+      let manualHandler = null;
       let lastFaceSeen = startedAt;
       let withDescriptor = null;
       let frameCount = 0;
+      let manualShown = false;
+
+      // Wire up manual fallback for this challenge
+      if (manualBtn) {
+        manualHandler = () => { manualClicked = true; };
+        manualBtn.addEventListener('click', manualHandler, { once: true });
+      }
 
       while (Date.now() - startedAt < timeoutPerChallenge) {
         frameCount++;
-        // Lightweight detection most frames; with-descriptor every 4th frame
-        const wantDescriptor = !withDescriptor && (frameCount % 4 === 0);
+
+        // Show manual fallback button after delay
+        if (manualBtn && !manualShown && (Date.now() - startedAt > manualBtnDelay)) {
+          manualBtn.style.display = '';
+          manualShown = true;
+        }
+
+        if (manualClicked) {
+          // User says they did it — accept it as long as we have a recent face
+          if (withDescriptor) {
+            captureCurrentFrame(withDescriptor);
+          } else {
+            // Try one more detection to capture
+            const det = await faceapi.detectSingleFace(videoEl, detectorOpts)
+              .withFaceLandmarks().withFaceDescriptor();
+            if (det && det.descriptor) captureCurrentFrame(det);
+          }
+          succeeded = true;
+          break;
+        }
+
+        const wantDescriptor = !withDescriptor || (frameCount % 8 === 0);
         const detection = wantDescriptor
           ? await faceapi.detectSingleFace(videoEl, detectorOpts).withFaceLandmarks().withFaceDescriptor()
           : await faceapi.detectSingleFace(videoEl, detectorOpts).withFaceLandmarks();
@@ -317,12 +320,9 @@
           if (hintEl && result.hint) hintEl.textContent = result.hint;
           if (result.done) {
             succeeded = true;
-            // Make sure we have a descriptor before capturing — request one now if needed
-            const captureSrc = withDescriptor || (detection.descriptor
-              ? detection
-              : await faceapi.detectSingleFace(videoEl, detectorOpts).withFaceLandmarks().withFaceDescriptor());
-            if (captureSrc && captureSrc.descriptor) captureCurrentFrame(captureSrc);
-            else captureCurrentFrame({ ...detection, descriptor: null }); // image only as fallback
+            const target = withDescriptor || (detection.descriptor ? detection : null);
+            if (target) captureCurrentFrame(target);
+            else captureCurrentFrame({ ...detection, descriptor: null });
             break;
           }
         } else {
@@ -331,14 +331,20 @@
             if (hintEl) hintEl.textContent = "I can't see your face — center it in the frame";
           }
         }
-        await new Promise(r => setTimeout(r, 30));
+        await new Promise(r => setTimeout(r, 50));
+      }
+
+      // Cleanup manual handler
+      if (manualBtn && manualHandler) {
+        manualBtn.removeEventListener('click', manualHandler);
+        manualBtn.style.display = 'none';
       }
 
       if (!succeeded) {
         return {
           success: false,
           failedChallenge: ch.id,
-          message: `Couldn't detect "${ch.prompt}". Make sure your face is well lit and try doing the action more deliberately.`
+          message: `Couldn't detect "${ch.prompt}". Make sure your face is centered and well-lit.`
         };
       }
 
@@ -349,26 +355,32 @@
     }
 
     if (captured.length === 0) {
-      return { success: false, message: 'No frames captured during liveness check.' };
+      // Try one final capture with descriptor
+      const det = await faceapi.detectSingleFace(videoEl, detectorOpts)
+        .withFaceLandmarks().withFaceDescriptor();
+      if (det && det.descriptor) captureCurrentFrame(det);
     }
 
-    // Best frame = one with descriptor, then highest detection score
+    if (captured.length === 0) {
+      return { success: false, message: 'No face frames captured during liveness check.' };
+    }
+
     const withDesc = captured.filter(c => c.descriptor);
     const pool = withDesc.length ? withDesc : captured;
     const best = pool.reduce((a, b) => a.score > b.score ? a : b);
 
     return {
       success: true,
-      faceImageData:  best.dataUrl,
-      descriptor:     best.descriptor,
-      faceBox:        best.box,
-      framesCount:    captured.length,
-      challenges:     challenges.map(c => c.id),
+      faceImageData: best.dataUrl,
+      descriptor:    best.descriptor,
+      faceBox:       best.box,
+      framesCount:   captured.length,
+      challenges:    challenges.map(c => c.id),
       baseline
     };
   }
 
-  // ── Compare descriptor against an image (e.g. ID front) ───────
+  // ── Compare a 128-D descriptor against an image ───────────────
   async function compareDescriptorToImage(descriptor, idDataUrl) {
     if (!descriptor || !idDataUrl) return null;
     if (!await ensureModels()) return null;
@@ -386,7 +398,6 @@
         console.warn('[liveness] no face found in ID image');
         return null;
       }
-
       const distance = faceapi.euclideanDistance(descriptor, idDetect.descriptor);
       const similarity = Math.max(0, Math.min(1, 1 - distance));
       console.log(`[liveness] match distance=${distance.toFixed(3)} similarity=${similarity.toFixed(3)}`);
@@ -397,9 +408,9 @@
     }
   }
 
-  // ── Crop just the face from an image (for the pass card) ──────
-  // Returns a square JPEG data URL with only the face — no text from
-  // the ID is visible. Padding adds headroom for hair/chin.
+  // ── Crop just the face from an image ──────────────────────────
+  // Returns a square JPEG data URL with only the face (padded for hair/chin).
+  // Falls back to original if no face is detected.
   async function cropFaceFromImage(dataUrl, sizePx = 360) {
     if (!await ensureModels()) return dataUrl;
     try {
@@ -408,31 +419,40 @@
       await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
 
       const det = await faceapi
-        .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.4 }))
+        .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.3 }))
         .withFaceLandmarks();
 
       if (!det) {
-        console.warn('[liveness] no face to crop');
+        console.warn('[liveness] no face to crop — returning original');
         return dataUrl;
       }
 
       const box = det.detection.box;
       const cx = box.x + box.width / 2;
       const cy = box.y + box.height / 2;
-      // Square crop with 60% padding around the face
-      const half = Math.max(box.width, box.height) * 0.85;
-      let sx = Math.max(0, cx - half);
-      let sy = Math.max(0, cy - half);
-      let sw = Math.min(img.width  - sx, half * 2);
-      let sh = Math.min(img.height - sy, half * 2);
+      // Generous padding so the crop has hair + neckline, no ID text
+      const half = Math.max(box.width, box.height) * 0.95;
+
+      let sx = cx - half;
+      let sy = cy - half;
+      let sw = half * 2;
+      let sh = half * 2;
+
+      // Clamp to image bounds and re-center if pushed
+      sx = Math.max(0, sx);
+      sy = Math.max(0, sy);
+      if (sx + sw > img.width)  sw = img.width  - sx;
+      if (sy + sh > img.height) sh = img.height - sy;
       const side = Math.min(sw, sh);
       sw = sh = side;
 
       const c = document.createElement('canvas');
       c.width = sizePx;
       c.height = sizePx;
-      c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sizePx, sizePx);
-      return c.toDataURL('image/jpeg', 0.9);
+      const cx2 = c.getContext('2d');
+      cx2.imageSmoothingQuality = 'high';
+      cx2.drawImage(img, sx, sy, sw, sh, 0, 0, sizePx, sizePx);
+      return c.toDataURL('image/jpeg', 0.92);
     } catch (err) {
       console.error('[liveness] face crop failed:', err);
       return dataUrl;

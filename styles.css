@@ -1296,3 +1296,9 @@ img, svg, video, canvas { max-width: 100%; display: block; }
   min-height: 1.3em;
   font-weight: 500;
 }
+
+.liveness-manual-btn {
+  margin-top: 14px;
+  font-size: 13px;
+  padding: 8px 14px;
+}
