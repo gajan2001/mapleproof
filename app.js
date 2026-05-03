@@ -857,7 +857,10 @@ async function saveAndGeneratePass() {
     if (window.MapleproofLiveness && state.faceImageData) {
       try {
         if (savingMsg) savingMsg.textContent = 'Preparing your photo…';
-        croppedLiveFace = await window.MapleproofLiveness.cropFaceFromImage(state.faceImageData, 360);
+        // Live photo: square, no circle (clean room background already)
+        croppedLiveFace = await window.MapleproofLiveness.cropFaceFromImage(
+          state.faceImageData, 360, { circular: false }
+        );
       } catch (err) {
         console.warn('[crop] live face crop failed; using full image:', err);
       }
@@ -870,7 +873,12 @@ async function saveAndGeneratePass() {
     if (window.MapleproofLiveness && state.idFrontImage) {
       try {
         if (savingMsg) savingMsg.textContent = 'Reading your ID photo…';
-        croppedIdFace = await window.MapleproofLiveness.cropFaceFromImage(state.idFrontImage, 360);
+        // ID photo: CIRCULAR mask + tighter crop — IDs have text right next to
+        // the photo, so we apply a circular fade-to-white mask as a safety net
+        // to ensure no DOB / address / signature is ever visible.
+        croppedIdFace = await window.MapleproofLiveness.cropFaceFromImage(
+          state.idFrontImage, 360, { circular: true }
+        );
       } catch (err) {
         console.warn('[crop] ID face crop failed:', err);
       }
@@ -883,13 +891,14 @@ async function saveAndGeneratePass() {
         if (savingMsg) savingMsg.textContent = 'Matching your face to your ID…';
 
         if (state.liveDescriptor && window.MapleproofLiveness) {
-          // Compare the descriptor we already have to the cropped ID face
-          // (cropped face = better match accuracy, no background noise)
+          // Match against the FULL ID front (face-api finds the face natively
+          // and gets the cleanest descriptor). The circularly-cropped version
+          // is only for display.
           matchScore = await window.MapleproofLiveness.compareDescriptorToImage(
-            state.liveDescriptor, croppedIdFace || state.idFrontImage
+            state.liveDescriptor, state.idFrontImage
           );
         } else if (state.faceImageData) {
-          matchScore = await compareFaces(croppedLiveFace, croppedIdFace || state.idFrontImage);
+          matchScore = await compareFaces(croppedLiveFace, state.idFrontImage);
         }
       } catch (err) {
         console.warn('[face-match] failed; continuing without match score:', err);

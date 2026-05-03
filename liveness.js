@@ -497,10 +497,12 @@
   }
 
   // ── Crop just the face from an image ──────────────────────────
-  // Returns a square JPEG data URL with only the face (padded for hair/chin).
-  // Falls back to original if no face is detected.
-  async function cropFaceFromImage(dataUrl, sizePx = 360) {
+  // Returns a square JPEG data URL with only the face visible.
+  // Uses landmarks (not just the detection box) for tight, accurate cropping
+  // so no ID text/info bleeds in. Optionally applies a circular mask.
+  async function cropFaceFromImage(dataUrl, sizePx = 360, opts = {}) {
     if (!await ensureModels()) return dataUrl;
+    const { circular = true, padding = 0.25 } = opts;
     try {
       const img = new Image();
       img.crossOrigin = 'anonymous';
@@ -515,31 +517,83 @@
         return dataUrl;
       }
 
-      const box = det.detection.box;
-      const cx = box.x + box.width / 2;
-      const cy = box.y + box.height / 2;
-      // Generous padding so the crop has hair + neckline, no ID text
-      const half = Math.max(box.width, box.height) * 0.95;
+      // Use the LANDMARKS (68 points) for precise face extent — much tighter
+      // than the detection box, which often includes neck/shoulders/background.
+      const lm = det.landmarks.positions;
+      const xs = lm.map(p => p.x);
+      const ys = lm.map(p => p.y);
+      const lmMinX = Math.min(...xs);
+      const lmMaxX = Math.max(...xs);
+      const lmMinY = Math.min(...ys);
+      const lmMaxY = Math.max(...ys);
+      const lmW = lmMaxX - lmMinX;   // width covered by landmarks
+      const lmH = lmMaxY - lmMinY;   // height covered by landmarks
+      const lmCx = (lmMinX + lmMaxX) / 2;
+      const lmCy = (lmMinY + lmMaxY) / 2;
 
-      let sx = cx - half;
-      let sy = cy - half;
-      let sw = half * 2;
-      let sh = half * 2;
+      // Add a small headroom on top (for hair) but minimal padding on sides
+      // to avoid pulling in ID text.
+      // Landmarks cover eyebrows→chin (no hair). Add ~25% on top, ~10% on sides.
+      const topPad    = lmH * 0.40;   // forehead/hair
+      const bottomPad = lmH * 0.10;   // chin
+      const sidePad   = lmW * 0.10;   // ears
 
-      // Clamp to image bounds and re-center if pushed
-      sx = Math.max(0, sx);
-      sy = Math.max(0, sy);
+      let sx = lmCx - (lmW / 2 + sidePad);
+      let sy = lmMinY - topPad;
+      let ex = lmCx + (lmW / 2 + sidePad);
+      let ey = lmMaxY + bottomPad;
+
+      // Make it square (use the larger dimension)
+      const w = ex - sx;
+      const h = ey - sy;
+      const side = Math.max(w, h);
+      // Re-center
+      const ccx = (sx + ex) / 2;
+      const ccy = (sy + ey) / 2;
+      sx = ccx - side / 2;
+      sy = ccy - side / 2;
+
+      // Clamp to image bounds
+      let sw = side, sh = side;
+      if (sx < 0) { sw += sx; sx = 0; }
+      if (sy < 0) { sh += sy; sy = 0; }
       if (sx + sw > img.width)  sw = img.width  - sx;
       if (sy + sh > img.height) sh = img.height - sy;
-      const side = Math.min(sw, sh);
-      sw = sh = side;
+      const finalSide = Math.min(sw, sh);
+      sw = sh = finalSide;
 
       const c = document.createElement('canvas');
       c.width = sizePx;
       c.height = sizePx;
-      const cx2 = c.getContext('2d');
-      cx2.imageSmoothingQuality = 'high';
-      cx2.drawImage(img, sx, sy, sw, sh, 0, 0, sizePx, sizePx);
+      const ctx2 = c.getContext('2d');
+      ctx2.imageSmoothingQuality = 'high';
+
+      if (circular) {
+        // Apply a soft circular mask as a safety net — anything in the corners
+        // (where ID text might still bleed in) gets faded to white.
+        ctx2.fillStyle = '#ffffff';
+        ctx2.fillRect(0, 0, sizePx, sizePx);
+
+        // Save context, set up circular clip
+        ctx2.save();
+        const r = sizePx / 2;
+        ctx2.beginPath();
+        ctx2.arc(r, r, r * 0.96, 0, Math.PI * 2);
+        ctx2.closePath();
+        ctx2.clip();
+        ctx2.drawImage(img, sx, sy, sw, sh, 0, 0, sizePx, sizePx);
+        ctx2.restore();
+
+        // Soft gradient ring so the edge isn't a hard circle
+        const gradient = ctx2.createRadialGradient(r, r, r * 0.85, r, r, r);
+        gradient.addColorStop(0, 'rgba(255,255,255,0)');
+        gradient.addColorStop(1, 'rgba(255,255,255,1)');
+        ctx2.fillStyle = gradient;
+        ctx2.fillRect(0, 0, sizePx, sizePx);
+      } else {
+        ctx2.drawImage(img, sx, sy, sw, sh, 0, 0, sizePx, sizePx);
+      }
+
       return c.toDataURL('image/jpeg', 0.92);
     } catch (err) {
       console.error('[liveness] face crop failed:', err);

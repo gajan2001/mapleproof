@@ -1,94 +1,60 @@
-# Mapleproof — v7 (twin photos, full 360 head sequence, real match scores)
+# Mapleproof — v8 (face-only ID crop, no info bleed)
 
-Three real fixes from your last bug report:
+## What changed
 
-## Fix 1: ID face is NOW shown on the pass card 🎯
+**The bug:** v7 used the face *detection box* with 0.95× padding. That box is a loose rectangle that often includes neck and shoulders — and when applied to an Ontario license layout (where text sits right next to the photo), the crop pulled in DOB, signature, address, gender, etc.
 
-**The bug:** v6 cropped the ID face but didn't actually display it on the pass — only the live face appeared next to the barcode.
+**The fix:** Three layered safeguards:
 
-**The fix:** Pass card now shows **two side-by-side photos** above the barcode:
-- **LIVE PHOTO** (left) — your face from the liveness check
-- **ID PHOTO** (right) — face cropped from the front of your ID
+### 1. Landmark-based cropping (instead of detection box)
 
-A subtle vertical divider sits between them. Below the barcode, a 3-column meta row shows: **Status · Photo Match · Issued**.
+Uses face-api.js's 68-point landmarks to find the **actual face extent** — the precise bounding box of all face features (eyebrows to chin, ear to ear). This is much tighter than the detection box.
 
-The downloadable PNG of the pass also has both photos drawn side by side.
+### 2. Asymmetric padding tuned for ID layouts
 
-The retailer also now receives the ID face when they scan, so they can visually compare LIVE vs ID at the counter.
-
-## Fix 2: Match scores are now realistic (not stuck below 60%)
-
-**The bug:** v6 used `similarity = 1 - distance`. With face-api.js, normal "same person" matches return distance 0.4-0.6 → similarity 40-60%. So even legitimate matches always looked weak.
-
-**The fix:** Non-linear similarity mapping that reflects how face-api.js actually behaves:
-
-| face-api distance | What it means | Display % |
+| Side | Padding | Why |
 |---|---|---|
-| < 0.30 | very strong match | **90-100%** |
-| 0.30 - 0.40 | strong match | **80-90%** |
-| 0.40 - 0.50 | normal same-person match | **70-80%** |
-| 0.50 - 0.60 | weak / borderline | **50-70%** |
-| 0.60 - 0.80 | likely different person | **10-50%** |
-| > 0.80 | clearly different | **<10%** |
+| Top | 40% of face height | Include hair |
+| Bottom | 10% of face height | Just under chin |
+| Left/right | 10% of face width | Avoid ID text bleed |
 
-Server thresholds bumped: ≥70% = strong (green ✓), 55-70% = weak (review), <55% = fail (red ✗). Matches that used to score 50% now correctly score 70-80%.
+Sides are now 9× tighter than v7. Top still has reasonable headroom for hair.
 
-## Fix 3: Liveness is now a full 4-direction sequence
+### 3. Circular mask safety net (ID photo only)
 
-**Before:** 2 random challenges out of {left, right, up, down}. Felt incomplete.
+The ID-side crop applies a soft circular mask after cropping — anything in the corners (where text might still bleed in if the face was photographed off-center) fades to white via a radial gradient.
 
-**Now:** All 4 directions (left, right, up, down) every time, in a randomized order so it can't be replayed from a recorded video. Plus the front-facing capture step at the end. Total flow:
+The live-photo side keeps a square crop (no mask needed — there's nothing identifying behind your face on the live camera).
 
-1. **Calibrating…** (1.5 sec) — silently captures backup front-facing frame
-2. **Step 1 of 4** — random direction, e.g. 👆 Tilt UP
-3. **Step 2 of 4** — random direction
-4. **Step 3 of 4** — random direction
-5. **Step 4 of 4** — random direction
-6. **Final step** 📸 Look straight at the camera (~3 sec) → captures the photo used for the pass + ID match
+### What you'll see
 
-Each direction times out after 18 sec. Manual fallback button "Having trouble? Tap when done →" still appears after 6 sec for accessibility.
+- **LIVE PHOTO** (left): clean square portrait, your face only
+- **ID PHOTO** (right): circular face crop with white corners — guaranteed no DOB / address / signature / gender info
 
-## Files changed in v7
+## Important: face matching unchanged
 
-| File | Change |
-|---|---|
-| `liveness.js` | Non-linear similarity mapping; full 4-direction shuffle |
-| `app.js` | `state.idCroppedFace` field; pass card sets both photos; sends `idFaceImage` to server; download canvas draws both photos; new match-score thresholds |
-| `app.html` | New `pass-twin-photos` div with LIVE + ID photo cards; updated intro copy to "4-direction" |
-| `styles.css` | Styles for `pass-twin-photos`, `pass-photo-card`, `pass-photo-divider`, `pass-meta-grid.full` |
-| `server.js` | New `id_face_enc` column with auto-migration; accepts/stores/returns `idFaceImage`; new strong/weak thresholds |
+The match score still uses the **full ID front photo** (face-api can find the face and extract a clean descriptor on its own). The crop is purely cosmetic — for display only. So matching accuracy is unaffected.
 
-Everything else is unchanged from v6 (logos, head-movement-only liveness, manual fallback, etc.)
+## Files changed in v8
 
-## Deploy — 5 files
+Just two files:
+
+- **`liveness.js`** — rewrote `cropFaceFromImage()` to use landmarks + asymmetric padding + optional circular mask
+- **`app.js`** — calls cropFaceFromImage with `{ circular: false }` for live, `{ circular: true }` for ID; matches against full ID front (better accuracy)
+
+Everything else from v7 is unchanged (twin photos on pass card, 4-direction liveness, realistic match scores, transparent logos).
+
+## Deploy
 
 ```bash
 cd C:\Users\gajan\Downloads\files
-git add liveness.js app.js app.html styles.css server.js
-git commit -m "Twin photos on pass + 4-direction liveness + realistic match scores"
+git add liveness.js app.js
+git commit -m "Tighter face-only crop with circular mask for ID photo"
 git push
 ```
 
-Render redeploys in 2-3 min. Watch the logs for `[mapleproof] migrated: id_face_enc` confirming the new column was added to your existing database.
+Render redeploys in 2-3 min. Re-register a test user to see the new ID crop.
 
-## What you'll see
+## Caveat
 
-1. **Liveness intro** says "4-direction head movement check"
-2. After calibration, you'll do all 4 directions: left → right → up → down (random order). Each one shows the orange face box turning green when registered.
-3. **Final 📸 step** — look straight at the camera for 3 sec
-4. Pass card displays **TWO photos above the barcode**:
-   ```
-   ┌─────────┬─────────┐
-   │  LIVE   │   ID    │
-   │ [face]  │ [face]  │
-   └─────────┴─────────┘
-   [────── BARCODE ──────]
-   Status · Photo Match · Issued
-   ```
-5. **Photo Match** value typically shows 70-90% for actual matches now — this is what users expect to see, and it gives retailers a meaningful signal at the counter.
-
-## Caveats (unchanged)
-
-- Models still load from `justadudewhohacks.github.io` CDN
-- The 4-direction sequence is more thorough but takes ~30-40 seconds total. If users complain about length, you can reduce `challengeCount: 4` → `3` in app.js.
-- Not bulletproof against deepfakes — that requires AWS Rekognition Face Liveness ($0.015/check)
+If the original ID photo has the face very close to the edge of the photo (or the face is small/tilted), the crop may still lean against the edge of one side. The circular mask handles this gracefully by fading to white instead of cutting hard. But for badly-photographed IDs, ask the user to retake the front photo.
