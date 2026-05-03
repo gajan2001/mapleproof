@@ -755,8 +755,9 @@ async function runLivenessFlow() {
       promptEl:   document.getElementById('liveness-prompt'),
       iconEl:     document.getElementById('liveness-icon'),
       stepEl:     document.getElementById('liveness-step'),
+      hintEl:     document.getElementById('liveness-hint'),
       challengeCount: 3,
-      timeoutPerChallenge: 12000
+      timeoutPerChallenge: 15000
     });
   } catch (err) {
     console.error('[liveness] error:', err);
@@ -845,41 +846,64 @@ async function saveAndGeneratePass() {
   saveError.style.display     = 'none';
 
   try {
-    // ── 1) Compute face match (selfie ↔ ID front) ──
-    // If we already have a descriptor from the liveness check (much faster),
-    // use it. Otherwise fall back to compareFaces() which extracts a fresh
-    // descriptor from the captured image.
+    const savingMsg = savingSection.querySelector('p');
+
+    // ── 1) Crop just the FACE from the live capture (no background) ──
+    // The pass card will display this cropped portrait.
+    let croppedLiveFace = state.faceImageData;
+    if (window.MapleproofLiveness && state.faceImageData) {
+      try {
+        if (savingMsg) savingMsg.textContent = 'Preparing your photo…';
+        croppedLiveFace = await window.MapleproofLiveness.cropFaceFromImage(state.faceImageData, 360);
+      } catch (err) {
+        console.warn('[crop] live face crop failed; using full image:', err);
+      }
+    }
+
+    // ── 2) Crop just the FACE from the ID front (no text/background) ──
+    // We use this for matching AND it's what the server stores so the
+    // pass card never shows ID text.
+    let croppedIdFace = null;
+    if (window.MapleproofLiveness && state.idFrontImage) {
+      try {
+        if (savingMsg) savingMsg.textContent = 'Reading your ID photo…';
+        croppedIdFace = await window.MapleproofLiveness.cropFaceFromImage(state.idFrontImage, 360);
+      } catch (err) {
+        console.warn('[crop] ID face crop failed:', err);
+      }
+    }
+
+    // ── 3) Compute face match (live ↔ ID front) using the CROPPED faces ──
     let matchScore = null;
     if (state.idFrontImage) {
       try {
-        const savingMsg = savingSection.querySelector('p');
         if (savingMsg) savingMsg.textContent = 'Matching your face to your ID…';
 
         if (state.liveDescriptor && window.MapleproofLiveness) {
-          // Use the descriptor we already extracted during liveness
+          // Compare the descriptor we already have to the cropped ID face
+          // (cropped face = better match accuracy, no background noise)
           matchScore = await window.MapleproofLiveness.compareDescriptorToImage(
-            state.liveDescriptor, state.idFrontImage
+            state.liveDescriptor, croppedIdFace || state.idFrontImage
           );
         } else if (state.faceImageData) {
-          // Fallback: extract from the captured face image
-          matchScore = await compareFaces(state.faceImageData, state.idFrontImage);
+          matchScore = await compareFaces(croppedLiveFace, croppedIdFace || state.idFrontImage);
         }
-
-        if (savingMsg) savingMsg.textContent = 'Saving your pass…';
       } catch (err) {
         console.warn('[face-match] failed; continuing without match score:', err);
       }
     }
     state.faceMatchScore = matchScore;
 
-    // ── 2) Submit to server ──
+    if (savingMsg) savingMsg.textContent = 'Saving your pass…';
+
+    // ── 4) Submit to server (send the CROPPED live face — no background) ──
     const response = await fetch('/api/register', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...state.parsed,
-        faceImageData:  state.faceImageData,
-        idFrontImage:   state.idFrontImage  || undefined,
+        faceImageData:  croppedLiveFace,                    // cropped live face
+        idFrontImage:   state.idFrontImage  || undefined,   // full original (for audit)
         idBackImage:    state.idBackImage   || undefined,
         faceMatchScore: matchScore,
         livenessVerified:   !!state.liveDescriptor,
@@ -908,8 +932,9 @@ async function saveAndGeneratePass() {
       fontFamily: 'JetBrains Mono, monospace'
     });
 
-    // Side metadata panel (status + issued date — expiry intentionally NOT shown to customer)
-    document.getElementById('pass-face-photo').src    = state.faceImageData;
+    // Pass photo = the CROPPED live face (no background, no ID text)
+    state.faceImageData = croppedLiveFace;  // also update so download uses cropped
+    document.getElementById('pass-face-photo').src = croppedLiveFace;
     document.getElementById('pass-status-val').textContent   = `REGISTERED · ${pub.ageBadge}`;
 
     // Photo-match indicator on the pass card

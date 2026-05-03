@@ -1288,3 +1288,11 @@ img, svg, video, canvas { max-width: 100%; display: block; }
 .camera-wrap.selfie-wrap video {
   transform: scaleX(-1); /* mirror for natural feel */
 }
+
+.liveness-hint {
+  margin-top: 10px;
+  font-size: 14px;
+  color: #5a7065;
+  min-height: 1.3em;
+  font-weight: 500;
+}
