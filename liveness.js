@@ -157,20 +157,50 @@
     return modelsLoading;
   }
 
-  // ── Calibrate baseline (resting head pose) ────────────────────
+  // ── Calibrate baseline (resting head pose) AND capture a front-facing
+  //    photo + descriptor for ID matching. The photo MUST be captured here,
+  //    not during head-turn challenges — that's why match scores were low
+  //    before. ID photos are taken straight-on; we need the same to compare.
   async function calibrate(videoEl, opts, statusFn) {
     const samples = [];
+    let bestFrontFacing = null;
     const start = Date.now();
-    while (Date.now() - start < 2000 && samples.length < 12) {
-      const det = await faceapi.detectSingleFace(videoEl, opts).withFaceLandmarks();
+    while (Date.now() - start < 2500 && samples.length < 14) {
+      // Use full descriptor mode every other frame so we have a descriptor
+      // to use as the "front-facing capture"
+      const wantDesc = samples.length % 2 === 0;
+      const det = wantDesc
+        ? await faceapi.detectSingleFace(videoEl, opts).withFaceLandmarks().withFaceDescriptor()
+        : await faceapi.detectSingleFace(videoEl, opts).withFaceLandmarks();
       if (det) {
         const lm = det.landmarks.positions;
-        samples.push({
-          yaw: headYaw(lm),
-          pitch: headPitch(lm),
-          score: det.detection.score
-        });
-        if (statusFn) statusFn(`Calibrating… ${samples.length}/12`);
+        const yaw = headYaw(lm);
+        const pitch = headPitch(lm);
+        const isFrontFacing = Math.abs(yaw) < 0.06 && Math.abs(pitch) < 0.06;
+        samples.push({ yaw, pitch, score: det.detection.score });
+
+        // Track the BEST front-facing frame (lowest yaw+pitch deviation, highest detection score)
+        if (det.descriptor && isFrontFacing) {
+          const quality = det.detection.score - (Math.abs(yaw) + Math.abs(pitch));
+          if (!bestFrontFacing || quality > bestFrontFacing.quality) {
+            // Capture a high-quality front-facing frame
+            const c = document.createElement('canvas');
+            c.width = videoEl.videoWidth;
+            c.height = videoEl.videoHeight;
+            const cx = c.getContext('2d');
+            cx.translate(c.width, 0);
+            cx.scale(-1, 1);
+            cx.drawImage(videoEl, 0, 0);
+            bestFrontFacing = {
+              dataUrl: c.toDataURL('image/jpeg', 0.92),
+              descriptor: det.descriptor,
+              box: det.detection.box,
+              score: det.detection.score,
+              quality
+            };
+          }
+        }
+        if (statusFn) statusFn(`Calibrating… ${samples.length}/14`);
       } else {
         if (statusFn) statusFn('Looking for your face — center it in the frame');
       }
@@ -181,7 +211,8 @@
     return {
       yaw:   med(samples.map(s => s.yaw)),
       pitch: med(samples.map(s => s.pitch)),
-      sampleCount: samples.length
+      sampleCount: samples.length,
+      frontFacing: bestFrontFacing  // NEW: front-facing capture for ID matching
     };
   }
 
@@ -354,27 +385,82 @@
       await new Promise(r => setTimeout(r, 600));
     }
 
-    if (captured.length === 0) {
-      // Try one final capture with descriptor
+    // ── FINAL STEP: capture a front-facing photo for ID matching ──
+    // The previous frames were captured during head turns / tilts, so the
+    // face angle won't match a typical ID photo. Ask user to face the camera
+    // and capture 5-10 front-facing frames.
+    if (promptEl) promptEl.textContent = 'Look straight at the camera';
+    if (iconEl)   iconEl.textContent   = '📸';
+    if (stepEl)   stepEl.textContent   = 'Final step';
+    if (hintEl)   hintEl.textContent   = 'Hold still — capturing your photo';
+
+    const finalCaptures = [];
+    const finalStart = Date.now();
+    while (Date.now() - finalStart < 3000 && finalCaptures.length < 8) {
       const det = await faceapi.detectSingleFace(videoEl, detectorOpts)
         .withFaceLandmarks().withFaceDescriptor();
-      if (det && det.descriptor) captureCurrentFrame(det);
+      if (det && det.descriptor) {
+        const lm = det.landmarks.positions;
+        const yaw = headYaw(lm);
+        const pitch = headPitch(lm);
+        const yawDev = Math.abs(yaw - baseline.yaw);
+        const pitchDev = Math.abs(pitch - baseline.pitch);
+        // Only keep frames where user is facing forward (close to baseline)
+        const isStraight = yawDev < 0.08 && pitchDev < 0.08;
+        if (isStraight) {
+          drawOverlay(det.detection.box, '#1f6f48');
+          const c = document.createElement('canvas');
+          c.width = videoEl.videoWidth;
+          c.height = videoEl.videoHeight;
+          const cx = c.getContext('2d');
+          cx.translate(c.width, 0);
+          cx.scale(-1, 1);
+          cx.drawImage(videoEl, 0, 0);
+          finalCaptures.push({
+            dataUrl: c.toDataURL('image/jpeg', 0.92),
+            descriptor: det.descriptor,
+            box: det.detection.box,
+            score: det.detection.score
+          });
+          if (hintEl) hintEl.textContent = `Captured ${finalCaptures.length}/3 — keep looking`;
+          if (finalCaptures.length >= 3) break;
+        } else {
+          drawOverlay(det.detection.box, '#d97a23');
+          if (hintEl) hintEl.textContent = 'Face the camera straight on';
+        }
+      }
+      await new Promise(r => setTimeout(r, 80));
     }
 
-    if (captured.length === 0) {
-      return { success: false, message: 'No face frames captured during liveness check.' };
-    }
+    if (promptEl) promptEl.textContent = '✓ All done!';
+    if (iconEl)   iconEl.textContent   = '🎉';
+    await new Promise(r => setTimeout(r, 400));
 
-    const withDesc = captured.filter(c => c.descriptor);
-    const pool = withDesc.length ? withDesc : captured;
-    const best = pool.reduce((a, b) => a.score > b.score ? a : b);
+    // Pick the best front-facing capture for the pass photo + ID match.
+    // Priority order:
+    //   1. Best frame from the FINAL capture step (highest score, just taken)
+    //   2. The front-facing frame from calibration (good fallback)
+    //   3. Best descriptor frame from any challenge (last resort)
+    let best;
+    if (finalCaptures.length > 0) {
+      best = finalCaptures.reduce((a, b) => a.score > b.score ? a : b);
+    } else if (baseline.frontFacing) {
+      best = baseline.frontFacing;
+    } else {
+      const withDesc = captured.filter(c => c.descriptor);
+      const pool = withDesc.length ? withDesc : captured;
+      if (pool.length === 0) {
+        return { success: false, message: 'No usable face frames captured.' };
+      }
+      best = pool.reduce((a, b) => a.score > b.score ? a : b);
+    }
 
     return {
       success: true,
       faceImageData: best.dataUrl,
       descriptor:    best.descriptor,
       faceBox:       best.box,
-      framesCount:   captured.length,
+      framesCount:   captured.length + finalCaptures.length,
       challenges:    challenges.map(c => c.id),
       baseline
     };

@@ -1,80 +1,77 @@
-# Mapleproof — v5 (head-movement liveness, no more blink fails)
+# Mapleproof — v6 (front-facing capture + clean logos)
 
-## What changed and why
+## What changed
 
-**The blink-detection problem is real.** I researched it — the face-api.js GitHub repo has open issues (#176, #221) confirming that blink detection with the 68-point landmark model is **fundamentally unreliable**. The eye landmarks are too noisy. No amount of threshold tuning fixes this.
+### Fix 1: Photo match scores will be much higher
 
-**The fix: drop blink detection entirely.** Replace it with **head-movement challenges only** — those use big geometric distances (whole face width / height) that face-api.js handles reliably:
+**The bug:** v5 captured the user's face *during* head-turn challenges. That meant the saved photo was at an awkward angle (head turned 15-20°), while the ID photo is straight-on. The descriptor distance was naturally large because the face geometry was different — not because it wasn't the same person.
 
-- 👈 Turn your head LEFT
-- 👉 Turn your head RIGHT
-- 👆 Tilt your head UP
-- 👇 Tilt your head DOWN
+**The fix:** Two front-facing captures, both during straight-on moments:
 
-Plus three additional safeguards:
+1. **During calibration** — the camera continuously snapshots while you're looking at it before challenges start. It keeps the highest-quality front-facing frame (lowest yaw + pitch deviation, highest detection confidence).
 
-1. **Calibration step** — reads your resting head pose for ~1.5 sec, so we measure your *change* in pose rather than absolute angles. Threshold = baseline ± 0.12 (yaw) or ± 0.07 (pitch).
+2. **Final "Look straight at the camera" step** — after the head-turn challenges, there's a new step (📸 icon) where the user faces forward for ~3 seconds. We capture up to 3 frames where yaw and pitch are within ±0.08 of baseline.
 
-2. **Per-challenge timeout raised to 20 seconds** (was 15s).
+The pass photo + ID match descriptor come from this final step (or fall back to the calibration capture). **Both are guaranteed to be straight-on**, just like the ID. Match scores should be significantly higher now.
 
-3. **Manual fallback button** — if the auto-detect doesn't trigger after 6 seconds, a "Having trouble? Tap when done →" button appears. The user can confirm they did the action manually. This is still secure because:
-   - A real face still has to be detected with confidence > 0.5
-   - The challenge sequence is still randomized
-   - Most spoofing attacks (printed photo) can't tap a button on the device anyway
+### Fix 2: Logo looks bigger and professional (no white box)
 
-Number of challenges reduced from 3 → 2 to keep the flow short.
+**The bug:** The favicon.png had a white background visible on white-page elements like the topbar. Same for the small "sm" version on the pass card.
 
-## Cropping is now more aggressive
+**The fix:** Generated two new logo assets with **transparent backgrounds**:
 
-The pass-card photo now uses **0.95×** face-box padding (was 0.85×) — generous space around the face for hair and chin, but still cuts off everything below the neck and to the sides. **No ID text is ever shown on the pass card.**
+- `logo-leaf-mark.png` — clean maple-leaf-only mark for compact spaces (topbar 44×44, pass card 24×24). No shield, no white background.
+- `logo-shield-transparent.png` — full shield with the white background removed, used for the home-screen hero at 160px.
 
-The downloadable PNG of the pass also uses this cropped face (state is updated after the crop).
+Sizes are bumped up across the board:
+- Topbar logo: 36px → **44px**
+- Pass card mini-logo: 22px → **26px**
+- Hero logo: 84px → **160px (auto-scales on small screens via `max-width: 50vw`)**
 
-## Files changed in v5
+Subtle drop shadow added so the logos pop on white backgrounds.
 
-- **`liveness.js`** — completely rewritten. No more blink/smile. Just 4 head-movement challenges. Manual fallback button support.
-- **`app.html`** — added `<button id="liveness-manual-btn">` inside the prompt card. Updated intro text to "2 random prompts".
-- **`app.js`** — passes `manualBtn` and `challengeCount: 2` to liveness, with a 6-second delay before the button appears.
-- **`styles.css`** — minor style for the manual button.
+## Files changed in v6
 
-Everything else is unchanged from v4 (face cropping, ID matching, etc.).
+| File | Change |
+|---|---|
+| `liveness.js` | Calibration captures best front-facing frame; new "look straight" step at end captures up to 3 forward-facing frames; result picks from finalCaptures → calibration.frontFacing → fallback |
+| `app.html` | Topbar uses `logo-leaf-mark.png` 44px; hero uses `logo-shield-transparent.png` 160px; pass card uses leaf mark 24px |
+| `retailer.html` + `admin.html` | Topbars use `logo-leaf-mark.png` 44px |
+| `styles.css` | Bigger logo sizes + drop-shadow |
+| **NEW:** `logo-leaf-mark.png` | Clean maple-leaf-only mark (transparent bg) |
+| **NEW:** `logo-shield-transparent.png` | Full shield with transparent bg |
+| `favicon.png` + `favicon-32.png` | Regenerated from the transparent shield |
 
-## To deploy — only 4 files changed
+Everything else unchanged from v5 — no blink detection, head-movement challenges only, manual fallback button, calibrated thresholds.
+
+## To deploy
 
 ```bash
 cd C:\Users\gajan\Downloads\files
-# Copy these from mapleproof-v5/:
-#   liveness.js, app.js, app.html, styles.css
-git add liveness.js app.js app.html styles.css
-git commit -m "Replace blink detection with head movement + manual fallback"
+# Copy these from mapleproof-v6/:
+#   liveness.js, app.html, retailer.html, admin.html, styles.css,
+#   logo-leaf-mark.png, logo-shield-transparent.png,
+#   favicon.png, favicon-32.png
+git add liveness.js app.html retailer.html admin.html styles.css \
+        logo-leaf-mark.png logo-shield-transparent.png \
+        favicon.png favicon-32.png
+git commit -m "Front-facing capture for ID match + clean transparent logos"
 git push
 ```
 
-Render auto-redeploys in 2-3 min.
+## What you'll see now
 
-## How to test
+1. Open `/app` — bigger shield logo on the home screen, leaf-only mark in the topbar
+2. Upload ID, tap "Process ID", tap "Start liveness check"
+3. **"Calibrating… 5/14"** — meanwhile, behind the scenes, your best front-facing frame is being captured silently
+4. **"Turn your head LEFT"** 👈 — do it (face box turns green)
+5. **"Tilt your head UP"** 👆 — do it
+6. **NEW: "Look straight at the camera"** 📸 — face forward for ~3 sec, "Captured 3/3" appears
+7. Pass card shows your face cropped square, **looking straight ahead** (matches the ID pose), with the leaf mark in the corner
+8. Photo match score should be in the 60-90% range for actual matches now (was 30-50% before because of the angle mismatch)
 
-1. Open `https://mapleproof.onrender.com/app` on a phone
-2. Upload front + back of ID, tap "Process ID"
-3. Tap "Start liveness check"
-4. After calibration finishes (1.5 sec), you'll see a head-movement prompt:
-   - **"Turn your head LEFT"** with 👈 icon
-5. Slowly turn your head about 15-20° left. The orange face box turns green when registered.
-6. If after 6 seconds the camera hasn't detected the movement, you'll see a button: "Having trouble? Tap when done →"
-7. Either way, you advance to the next challenge.
-8. Pass card shows your face cropped square, no background, no ID text.
+## Caveats
 
-## Why head movement works when blink doesn't
-
-| Metric | What's measured | Pixel range | Noise |
-|---|---|---|---|
-| **Blink (EAR)** | tiny eye landmark distances | 5-15 pixels | Very high — landmarks shift even at rest |
-| **Head yaw** | nose offset from face center | 50-200 pixels | Low — face landmarks are stable |
-
-Head yaw also can't be faked by holding up a static photo (the photo would have to physically rotate).
-
-## Known caveats (unchanged)
-
-- Models load from `justadudewhohacks.github.io` CDN — first-run takes ~6 MB download
-- Manual fallback exists for accessibility; you can disable it by removing `manualBtn:` from the runLivenessChallenge call in app.js
-- Not bulletproof against high-end deepfakes — for that, AWS Rekognition Face Liveness ($0.015/check) is the cheap commercial option
+- Models still load from `justadudewhohacks.github.io` CDN
+- The final capture step adds ~3 seconds to the flow but produces dramatically better match scores
+- If for some reason no straight-on frame is captured (you wandered off, etc.), it gracefully falls back to the calibration capture

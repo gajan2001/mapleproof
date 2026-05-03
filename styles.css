@@ -1042,21 +1042,24 @@ img, svg, video, canvas { max-width: 100%; display: block; }
 
 /* ───────── BRAND IMAGE LOGO ───────── */
 .brand-mark-img {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   flex-shrink: 0;
   object-fit: contain;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.08));
 }
 .brand-mark-img.sm {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
 }
 .hero-mark-img {
-  width: 84px;
-  height: 84px;
-  margin: 0 auto 20px;
+  width: 160px;
+  height: auto;
+  max-width: 50vw;
+  margin: 0 auto 24px;
   object-fit: contain;
   display: block;
+  filter: drop-shadow(0 4px 12px rgba(0,0,0,0.10));
 }
 
 /* ───────── ID UPLOAD CARDS ───────── */
