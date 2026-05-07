@@ -13,6 +13,18 @@
 const express   = require('express');
 const Database  = require('better-sqlite3');
 const crypto    = require('crypto');
+
+// ── DATABASE RESET (for schema migrations) ───────────────────────
+if (process.env.RESET_DB === '1') {
+  const fs = require('fs');
+  const dbPath = './data/mapleproof.db';
+  if (fs.existsSync(dbPath)) {
+    console.log('[mapleproof] RESET_DB=1 detected, deleting old database...');
+    fs.unlinkSync(dbPath);
+    console.log('[mapleproof] Database deleted. Will create fresh schema on next startup.');
+  }
+}
+
 const path      = require('path');
 const fs        = require('fs');
 const https     = require('https');
