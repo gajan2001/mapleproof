@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>For Retailers — Mapleproof</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="legal-styles.css">
+</head>
+<body>
+
+<nav class="legal-nav">
+  <div class="legal-nav-inner">
+    <a href="/" class="legal-brand">
+      <img src="logo-leaf-mark.png" alt="">
+      <span>Mapleproof</span>
+    </a>
+    <div class="legal-nav-links">
+      <a href="/faq">FAQ</a>
+      <a href="/retailers">For Retailers</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/app" class="legal-cta">Get my pass</a>
+    </div>
+  </div>
+</nav>
+
+<main class="legal">
+  <h1>For retailers</h1>
+  <p class="subtitle">A faster checkout layer for Ontario's age-restricted retail. Built to coexist with your existing ID checks, not replace them.</p>
+
+  <div class="callout">
+    <strong>The 30-second pitch</strong>
+    Customers register their ID with Mapleproof once. They show you a barcode. Your scanner shows their age tier, photo for visual comparison, and verification flags — in under 2 seconds. You still check the physical ID (Ontario law requires it), but the line moves faster.
+  </div>
+
+  <h2>How it works for cashiers</h2>
+  <ol>
+    <li>Customer pulls up their barcode on their phone or shows you a printed pass</li>
+    <li>Cashier scans the barcode using a tablet or phone running our scanner page (<a href="/retailer">/retailer</a>)</li>
+    <li>Within 1-2 seconds, the cashier sees:
+      <ul>
+        <li>A big green/amber/red banner showing the verification status</li>
+        <li>The customer's live photo and ID photo for visual comparison</li>
+        <li>Their age tier (19+ or 25+) computed live</li>
+        <li>Any warnings (recently registered, photo match weak, etc.)</li>
+      </ul>
+    </li>
+    <li>Cashier <strong>still checks the physical ID</strong> as required by Ontario law, but with much more confidence</li>
+  </ol>
+
+  <h2>Compliance and audit</h2>
+
+  <div class="compliance-grid">
+    <div class="badge">
+      <strong>PIPEDA Compliant</strong>
+      <p>Privacy practices align with Canada's federal privacy law.</p>
+    </div>
+    <div class="badge">
+      <strong>Tamper-evident audit log</strong>
+      <p>Every scan is logged with timestamp, store, and verification flags. Hash-chained.</p>
+    </div>
+    <div class="badge">
+      <strong>Encrypted at rest</strong>
+      <p>AES-256-GCM for all sensitive fields. Encryption key stored separately.</p>
+    </div>
+    <div class="badge">
+      <strong>Canadian hosting</strong>
+      <p>Database hosted in Canadian region. Data residency compliant.</p>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <strong>What Mapleproof does NOT do</strong>
+    Mapleproof does not authorize sales of age-restricted products. Under Ontario's Liquor Licence and Control Act, 2019 and the Cannabis Licence Act, 2018, you remain solely responsible for verifying a valid government-issued ID at every transaction. Mapleproof is a confidence layer that sits alongside your physical ID check. If you sell to a minor, you face up to $100,000 in monetary penalties and potential license suspension regardless of what our scanner showed.
+  </div>
+
+  <h2>What an AGCO inspection looks like with Mapleproof</h2>
+  <p>You can show the inspector:</p>
+  <ul>
+    <li>Your tamper-evident audit log of every scan with timestamps</li>
+    <li>Monthly compliance reports (CSV/PDF export — coming Q3 2026)</li>
+    <li>Documentation that staff are trained to physically inspect every ID</li>
+    <li>Your retailer agreement explicitly stating Mapleproof supplements but does not replace ID checks</li>
+  </ul>
+  <p>Important: this documentation supports your compliance posture but does not substitute for AGCO's primary requirement — checking physical IDs.</p>
+
+  <h2>Pricing</h2>
+  <p>Free during the launch period. Per-store pricing in 2027 will start at $29-49/month per store with volume discounts for chains. Customer use remains free permanently.</p>
+
+  <h2>Sign up</h2>
+  <p>Self-signup creates a pending account. We approve manually within 1 business day after verifying your AGCO authorization.</p>
+
+  <form class="delete-form" id="signup-form">
+    <label for="businessName">Business name</label>
+    <input type="text" id="businessName" name="businessName" required maxlength="200" placeholder="e.g. Greenleaf Cannabis Inc.">
+
+    <label for="storeName">Store / location name</label>
+    <input type="text" id="storeName" name="storeName" required maxlength="200" placeholder="e.g. Greenleaf Bloor West">
+
+    <label for="storeAddress">Store address</label>
+    <input type="text" id="storeAddress" name="storeAddress" maxlength="500" placeholder="e.g. 123 Bloor St W, Toronto ON">
+
+    <label for="contactEmail">Contact email</label>
+    <input type="email" id="contactEmail" name="contactEmail" required maxlength="200" placeholder="manager@yourstore.example">
+
+    <label style="display: flex; gap: 10px; align-items: flex-start; font-weight: 400; font-size: 14px; color: var(--ink-soft);">
+      <input type="checkbox" id="agree" required style="margin-top: 4px; width: auto;">
+      <span>I confirm my business holds a valid AGCO Retail Store Authorization (or equivalent provincial license) and I understand Mapleproof does not replace the legal requirement to check physical ID at every transaction.</span>
+    </label>
+
+    <button type="submit" class="btn-primary" style="margin-top: 18px; width: 100%;">Submit signup</button>
+    <p id="signup-status" style="margin-top: 16px; font-size: 14px; color: var(--muted);"></p>
+  </form>
+
+  <h2>Got questions?</h2>
+  <p>Email <a href="mailto:retailers@mapleproof.example">retailers@mapleproof.example</a> — a real human reads every email and replies within 1 business day.</p>
+</main>
+
+<footer class="legal-footer">
+  <div class="legal-footer-inner">
+    <div>
+      <h4>Mapleproof</h4>
+      <p style="color: rgba(255,255,255,0.7); font-size: 13px; margin: 0;">Privacy-first age verification for Ontario.</p>
+    </div>
+    <div>
+      <h4>Product</h4>
+      <ul>
+        <li><a href="/app">Get my pass</a></li>
+        <li><a href="/retailers">For retailers</a></li>
+        <li><a href="/faq">FAQ</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Legal</h4>
+      <ul>
+        <li><a href="/privacy">Privacy Policy</a></li>
+        <li><a href="/terms">Terms of Service</a></li>
+        <li><a href="/delete">Delete my account</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Contact</h4>
+      <ul>
+        <li><a href="mailto:hello@mapleproof.example">hello@mapleproof.example</a></li>
+        <li><a href="mailto:retailers@mapleproof.example">retailers@mapleproof.example</a></li>
+      </ul>
+    </div>
+  </div>
+  <p class="footer-disclaimer" style="max-width: 1100px; margin: 30px auto 0; padding: 0 24px;">
+    Mapleproof is not a substitute for retailer ID verification. Retailers remain solely responsible for verifying valid government-issued ID at every transaction in accordance with Ontario law.
+  </p>
+</footer>
+
+<script>
+document.getElementById('signup-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const status = document.getElementById('signup-status');
+  status.textContent = 'Submitting…';
+  status.style.color = 'var(--muted)';
+  try {
+    const resp = await fetch('/api/retailer/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        businessName: document.getElementById('businessName').value.trim(),
+        storeName:    document.getElementById('storeName').value.trim(),
+        storeAddress: document.getElementById('storeAddress').value.trim(),
+        contactEmail: document.getElementById('contactEmail').value.trim()
+      })
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      status.style.color = 'var(--green)';
+      status.innerHTML = `<strong>Signup received.</strong> Your retailer ID is <code>${data.retailerId}</code>. ` +
+        `Save this API key now — we won't show it again: <code style="word-break: break-all;">${data.apiKey}</code>. ` +
+        `We'll email you when your account is approved.`;
+      document.getElementById('signup-form').querySelector('button').disabled = true;
+    } else {
+      status.style.color = 'var(--red)';
+      status.textContent = data.error || 'Signup failed.';
+    }
+  } catch (err) {
+    status.style.color = 'var(--red)';
+    status.textContent = 'Network error. Try again.';
+  }
+});
+</script>
+
+</body>
+</html>

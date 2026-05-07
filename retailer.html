@@ -18,7 +18,11 @@
       <span class="brand-word">Mapleproof</span>
       <span class="brand-tag">Retailer</span>
     </div>
-    <a class="topbar-link" href="/app">&larr; Customer</a>
+    <div style="display:flex; gap:14px; align-items:center;">
+      <button id="settings-btn" type="button" class="btn-ghost" title="Retailer settings"
+              style="padding:8px 14px; font-size:13px;">⚙ Settings</button>
+      <a class="topbar-link" href="/app">&larr; Customer</a>
+    </div>
   </header>
 
   <main class="container retailer">
@@ -96,6 +100,11 @@
   <div id="result-overlay" class="result-overlay" hidden>
     <div id="result-card" class="result-card">
 
+      <!-- BIG GREEN/AMBER/RED BANNER -->
+      <div id="result-banner" class="result-banner banner-approved">
+        <span id="banner-text">VERIFIED · 19+</span>
+      </div>
+
       <!-- Auto-clear countdown ring -->
       <div class="countdown-wrap" aria-label="Result will clear automatically">
         <svg class="countdown-ring" viewBox="0 0 44 44" aria-hidden="true">
@@ -105,19 +114,18 @@
         <span class="countdown-num" id="countdown-num">19</span>
       </div>
 
-      <span class="result-tone-strip" id="res-tone-strip"></span>
-
-      <header class="result-head">
-        <h2 id="res-title">Verified</h2>
-        <p id="res-subtitle" class="result-subtitle">Pass found</p>
-      </header>
-
       <div class="result-body">
-        <img id="res-photo" class="result-photo" src="" alt="Customer photo">
-
-        <div class="result-age-block">
-          <div class="pf-label tiny">Age tier</div>
-          <div class="result-age" id="res-age-badge">19+</div>
+        <!-- TWIN PHOTOS for visual comparison -->
+        <div class="result-twin-photos">
+          <div class="result-photo-card">
+            <span class="result-photo-label">LIVE PHOTO</span>
+            <img id="res-live-photo" class="result-twin-img" src="" alt="Live photo">
+          </div>
+          <div class="result-photo-divider">vs</div>
+          <div class="result-photo-card">
+            <span class="result-photo-label">ID PHOTO</span>
+            <img id="res-id-photo" class="result-twin-img" src="" alt="ID photo">
+          </div>
         </div>
 
         <div class="result-stats">
@@ -136,15 +144,42 @@
         </div>
 
         <div class="result-must-check">
-          <strong>Must check ID.</strong>
-          <span>Cashier makes the final call.</span>
+          <strong>Must check physical ID.</strong>
+          <span>Mapleproof does not authorize the sale. Cashier makes the final call.</span>
         </div>
 
         <div id="res-flags-wrap" class="result-flags" hidden>
           <h4>Cashier alerts</h4>
           <ul id="res-flags-list"></ul>
         </div>
+
+        <div class="result-actions">
+          <button id="flag-fraud-btn" class="btn-flag-fraud" type="button">⚠ Flag as fraud</button>
+        </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ─── SETTINGS MODAL (retailer API key) ─── -->
+  <div id="settings-overlay" class="result-overlay" hidden>
+    <div class="settings-card">
+      <h3 style="margin-top:0;">Retailer settings</h3>
+      <p style="font-size:14px; color:var(--muted);">
+        Paste your Mapleproof retailer API key. It's stored only in this browser
+        and sent with each scan to log the store. Without it, scans log as anonymous.
+      </p>
+      <label for="api-key-input" style="display:block; font-weight:600; font-size:13px; margin:14px 0 6px;">API key</label>
+      <input id="api-key-input" type="text" placeholder="mk_..." spellcheck="false"
+             style="width:100%; padding:12px; border:2px solid var(--line); border-radius:10px; font-family:monospace; font-size:14px;">
+      <p style="font-size:12px; color:var(--muted); margin:8px 0 0;">
+        Don't have one yet? <a href="/retailers" target="_blank">Sign up at /retailers</a>.
+      </p>
+      <div style="display:flex; gap:10px; margin-top:18px;">
+        <button id="save-api-key-btn" class="btn-primary" type="button" style="flex:1;">Save</button>
+        <button id="clear-api-key-btn" class="btn-ghost" type="button">Clear</button>
+        <button id="close-settings-btn" class="btn-ghost" type="button">Close</button>
+      </div>
+      <div id="settings-status" style="margin-top:12px; font-size:13px; min-height:18px;"></div>
     </div>
   </div>
 

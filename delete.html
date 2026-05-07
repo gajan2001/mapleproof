@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Delete my account — Mapleproof</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="legal-styles.css">
+</head>
+<body>
+
+<nav class="legal-nav">
+  <div class="legal-nav-inner">
+    <a href="/" class="legal-brand">
+      <img src="logo-leaf-mark.png" alt="">
+      <span>Mapleproof</span>
+    </a>
+    <div class="legal-nav-links">
+      <a href="/faq">FAQ</a>
+      <a href="/retailers">For Retailers</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/app" class="legal-cta">Get my pass</a>
+    </div>
+  </div>
+</nav>
+
+<main class="legal">
+  <h1>Delete my account</h1>
+  <p class="subtitle">Your right under PIPEDA. We'll execute your request within 30 days.</p>
+
+  <div class="callout warn">
+    <strong>This is permanent</strong>
+    Once you submit this request, your name, DOB, ID number hash, photos, and all associated records will be deleted from our database. You can re-register at any time, but your barcode token will change. Past audit log entries are retained for 5 years for compliance purposes (the entries reference only your token, not your personal information after deletion).
+  </div>
+
+  <h2>Option 1: Submit a deletion request</h2>
+  <p>We'll review and execute within 30 days. You'll receive email confirmation when complete.</p>
+
+  <form class="delete-form" id="request-form">
+    <label for="token">Your barcode token</label>
+    <input type="text" id="token" name="token" required maxlength="16" placeholder="e.g. 4DKYK87VY5" style="font-family: 'JetBrains Mono', monospace; letter-spacing: 0.05em; text-transform: uppercase;">
+    <p style="font-size: 13px; color: var(--muted); margin: -10px 0 16px;">
+      You can find this on your pass card under "ID · ".
+    </p>
+
+    <label for="reason">Reason (optional)</label>
+    <textarea id="reason" name="reason" rows="3" maxlength="500" placeholder="Help us improve — why are you deleting?"></textarea>
+
+    <button type="submit" class="btn-primary" style="width: 100%;">Submit deletion request</button>
+    <p id="request-status" style="margin-top: 16px; font-size: 14px; color: var(--muted);"></p>
+  </form>
+
+  <hr>
+
+  <h2>Option 2: Immediate deletion</h2>
+  <p>Delete your account right now. Your data will be removed within seconds. No review, no email confirmation.</p>
+
+  <form class="delete-form" id="immediate-form">
+    <label for="immediate-token">Your barcode token</label>
+    <input type="text" id="immediate-token" name="immediate-token" required maxlength="16" placeholder="e.g. 4DKYK87VY5" style="font-family: 'JetBrains Mono', monospace; letter-spacing: 0.05em; text-transform: uppercase;">
+
+    <label style="display: flex; gap: 10px; align-items: flex-start; font-weight: 400; font-size: 14px; color: var(--ink-soft);">
+      <input type="checkbox" id="immediate-confirm" required style="margin-top: 4px; width: auto;">
+      <span>I understand this is permanent and immediate. I confirm I am the owner of this account.</span>
+    </label>
+
+    <button type="submit" class="btn-secondary" style="width: 100%; margin-top: 18px; color: var(--red); border-color: var(--red);">Delete my account NOW</button>
+    <p id="immediate-status" style="margin-top: 16px; font-size: 14px; color: var(--muted);"></p>
+  </form>
+
+  <h2>Other privacy rights</h2>
+  <p>Beyond deletion, under PIPEDA you also have the right to:</p>
+  <ul>
+    <li><strong>Access</strong> — request a copy of all data we hold about you</li>
+    <li><strong>Correction</strong> — request fixes to inaccurate data</li>
+    <li><strong>Withdraw consent</strong> — same effect as deletion</li>
+  </ul>
+  <p>Email <a href="mailto:privacy@mapleproof.example">privacy@mapleproof.example</a> for any of these. We respond within 30 days as required.</p>
+
+  <p>If you're unsatisfied with our response, you can complain to the <a href="https://www.priv.gc.ca/" target="_blank" rel="noopener">Office of the Privacy Commissioner of Canada</a> at 1-800-282-1376.</p>
+</main>
+
+<footer class="legal-footer">
+  <div class="legal-footer-inner">
+    <div>
+      <h4>Mapleproof</h4>
+      <p style="color: rgba(255,255,255,0.7); font-size: 13px; margin: 0;">Privacy-first age verification for Ontario.</p>
+    </div>
+    <div>
+      <h4>Product</h4>
+      <ul>
+        <li><a href="/app">Get my pass</a></li>
+        <li><a href="/retailers">For retailers</a></li>
+        <li><a href="/faq">FAQ</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Legal</h4>
+      <ul>
+        <li><a href="/privacy">Privacy Policy</a></li>
+        <li><a href="/terms">Terms of Service</a></li>
+        <li><a href="/delete">Delete my account</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Contact</h4>
+      <ul>
+        <li><a href="mailto:hello@mapleproof.example">hello@mapleproof.example</a></li>
+        <li><a href="mailto:privacy@mapleproof.example">privacy@mapleproof.example</a></li>
+      </ul>
+    </div>
+  </div>
+  <p class="footer-disclaimer" style="max-width: 1100px; margin: 30px auto 0; padding: 0 24px;">
+    Mapleproof is not a substitute for retailer ID verification.
+  </p>
+</footer>
+
+<script>
+document.getElementById('request-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const status = document.getElementById('request-status');
+  status.textContent = 'Submitting…';
+  status.style.color = 'var(--muted)';
+  try {
+    const resp = await fetch('/api/customer/request-deletion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: document.getElementById('token').value.trim().toUpperCase(),
+        reason: document.getElementById('reason').value.trim()
+      })
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      status.style.color = 'var(--green)';
+      status.textContent = data.message;
+      document.getElementById('request-form').querySelector('button').disabled = true;
+    } else {
+      status.style.color = 'var(--red)';
+      status.textContent = data.error || 'Request failed.';
+    }
+  } catch (err) {
+    status.style.color = 'var(--red)';
+    status.textContent = 'Network error. Try again.';
+  }
+});
+
+document.getElementById('immediate-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const status = document.getElementById('immediate-status');
+  if (!confirm('Permanently delete your account? This cannot be undone.')) return;
+  status.textContent = 'Deleting…';
+  try {
+    const token = document.getElementById('immediate-token').value.trim().toUpperCase();
+    const resp = await fetch(`/api/customer/account/${encodeURIComponent(token)}`, {
+      method: 'DELETE'
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      status.style.color = 'var(--green)';
+      status.textContent = data.message;
+      document.getElementById('immediate-form').querySelector('button').disabled = true;
+    } else {
+      status.style.color = 'var(--red)';
+      status.textContent = data.error || 'Deletion failed.';
+    }
+  } catch (err) {
+    status.style.color = 'var(--red)';
+    status.textContent = 'Network error.';
+  }
+});
+</script>
+
+</body>
+</html>

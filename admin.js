@@ -89,6 +89,14 @@
       document.getElementById('stat-25').textContent      = s.tier25Plus;
       document.getElementById('stat-expired').textContent = s.expired;
       document.getElementById('stat-scans').textContent   = s.totalScans;
+      const fraudEl = document.getElementById('stat-fraud');
+      const delEl   = document.getElementById('stat-deletions');
+      const retEl   = document.getElementById('stat-retailers');
+      const retPEl  = document.getElementById('stat-retailers-pending');
+      if (fraudEl) fraudEl.textContent = s.fraudHolds || 0;
+      if (delEl)   delEl.textContent   = s.pendingDeletions || 0;
+      if (retEl)   retEl.textContent   = s.retailerCount || 0;
+      if (retPEl)  retPEl.textContent  = s.pendingRetailers || 0;
     } catch (err) { console.error(err); }
   }
 
@@ -230,6 +238,144 @@
     if (s < 86400) return `${Math.floor(s/3600)}h ago`;
     return `${Math.floor(s/86400)}d ago`;
   }
+
+  // ── TABS ───────────────────────────────────────────────────────
+  document.querySelectorAll('.admin-tabs button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      document.querySelectorAll('.admin-tabs button').forEach(b => b.classList.toggle('active', b === btn));
+      document.querySelectorAll('.admin-tab-panel').forEach(p => {
+        p.classList.toggle('active', p.id === `tab-${tab}`);
+      });
+      // Lazy-load tab data on first open
+      if (tab === 'retailers') loadRetailers();
+      if (tab === 'audit')     loadAuditLog();
+      if (tab === 'deletions') loadDeletions();
+    });
+  });
+
+  // ── RETAILERS ──────────────────────────────────────────────────
+  async function loadRetailers() {
+    const tbody = document.getElementById('retailers-tbody');
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#5a7065;padding:30px;">Loading…</td></tr>';
+    try {
+      const resp = await fetch('/api/admin/retailers', { headers: authHeaders() });
+      if (resp.status === 401) return logoutBtn.click();
+      const data = await resp.json();
+      if (!data.ok) return;
+      if (!data.retailers.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#5a7065;padding:30px;">No retailers yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.retailers.map(r => `
+        <tr>
+          <td>${escapeHtml(r.business_name)}<br><small style="color:#5a7065;font-family:monospace;">${escapeHtml(r.retailer_id)}</small></td>
+          <td>${escapeHtml(r.store_name || '—')}<br><small style="color:#5a7065;">${escapeHtml(r.store_address || '')}</small></td>
+          <td>${escapeHtml(r.contact_email || '—')}</td>
+          <td>${formatRelative(r.created_at)}</td>
+          <td>${r.last_used_at ? formatRelative(r.last_used_at) : '—'}</td>
+          <td>${r.active
+              ? '<span class="retailer-badge-active">Active</span>'
+              : '<span class="retailer-badge-pending">Pending</span>'}</td>
+          <td>
+            ${!r.active ? `<button class="btn-mini" onclick="approveRetailer('${escapeAttr(r.retailer_id)}')">Approve</button>` : ''}
+            ${r.active  ? `<button class="btn-mini btn-mini-danger" onclick="disableRetailer('${escapeAttr(r.retailer_id)}')">Disable</button>` : ''}
+          </td>
+        </tr>
+      `).join('');
+    } catch (err) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#c8362b;padding:30px;">Network error.</td></tr>';
+    }
+  }
+  window.approveRetailer = async function(id) {
+    const resp = await fetch(`/api/admin/retailers/${id}/approve`, { method: 'POST', headers: authHeaders() });
+    if (resp.ok) { loadRetailers(); loadStats(); }
+    else alert('Failed to approve.');
+  };
+  window.disableRetailer = async function(id) {
+    if (!confirm(`Disable retailer ${id}? Their API key will stop working immediately.`)) return;
+    const resp = await fetch(`/api/admin/retailers/${id}/disable`, { method: 'POST', headers: authHeaders() });
+    if (resp.ok) { loadRetailers(); loadStats(); }
+    else alert('Failed to disable.');
+  };
+  document.getElementById('refresh-retailers-btn')?.addEventListener('click', loadRetailers);
+
+  // ── AUDIT LOG ──────────────────────────────────────────────────
+  async function loadAuditLog() {
+    const tbody = document.getElementById('audit-tbody');
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#5a7065;padding:30px;">Loading…</td></tr>';
+    try {
+      const resp = await fetch('/api/admin/audit-log?limit=200', { headers: authHeaders() });
+      if (resp.status === 401) return logoutBtn.click();
+      const data = await resp.json();
+      if (!data.ok) return;
+      if (!data.entries.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#5a7065;padding:30px;">No audit entries yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.entries.map(e => `
+        <tr>
+          <td class="col-ts">${new Date(e.ts).toISOString().replace('T',' ').substring(0,19)}</td>
+          <td>${escapeHtml(e.actor)}</td>
+          <td class="col-action">${escapeHtml(e.action)}</td>
+          <td class="col-target">${escapeHtml(e.target || '—')}</td>
+          <td style="font-family:monospace;font-size:11px;color:#5a7065;">${escapeHtml(e.ip || '—')}</td>
+          <td class="col-details">${escapeHtml(e.details || '—')}</td>
+        </tr>
+      `).join('');
+    } catch (err) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#c8362b;padding:30px;">Network error.</td></tr>';
+    }
+  }
+  document.getElementById('refresh-audit-btn')?.addEventListener('click', loadAuditLog);
+  document.getElementById('verify-audit-btn')?.addEventListener('click', async () => {
+    const banner = document.getElementById('audit-integrity-banner');
+    banner.innerHTML = '<div class="integrity-banner" style="background:#f3f7f4;color:#5a7065;">Verifying chain…</div>';
+    try {
+      const resp = await fetch('/api/admin/audit-verify', { headers: authHeaders() });
+      const data = await resp.json();
+      if (data.integrity.ok) {
+        banner.innerHTML = `<div class="integrity-banner integrity-ok">✓ Audit chain verified. ${data.integrity.count} entries, no tampering detected.</div>`;
+      } else {
+        banner.innerHTML = `<div class="integrity-banner integrity-bad">✗ TAMPERING DETECTED at entry #${data.integrity.brokenAt}. ${data.integrity.reason || 'Hash mismatch.'}</div>`;
+      }
+    } catch (err) {
+      banner.innerHTML = '<div class="integrity-banner integrity-bad">Verification failed: network error.</div>';
+    }
+  });
+
+  // ── DELETIONS ──────────────────────────────────────────────────
+  async function loadDeletions() {
+    const tbody = document.getElementById('deletions-tbody');
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#5a7065;padding:30px;">Loading…</td></tr>';
+    try {
+      const resp = await fetch('/api/admin/deletion-requests', { headers: authHeaders() });
+      if (resp.status === 401) return logoutBtn.click();
+      const data = await resp.json();
+      if (!data.ok) return;
+      if (!data.requests.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#5a7065;padding:30px;">No pending deletion requests.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.requests.map(r => `
+        <tr>
+          <td style="font-family:monospace;">${escapeHtml(r.token)}</td>
+          <td>${formatRelative(r.requested_at)}</td>
+          <td>${escapeHtml(r.reason || '—')}</td>
+          <td><button class="btn-mini btn-mini-danger" onclick="executeDeletion(${r.id})">Execute deletion</button></td>
+        </tr>
+      `).join('');
+    } catch (err) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#c8362b;padding:30px;">Network error.</td></tr>';
+    }
+  }
+  window.executeDeletion = async function(id) {
+    if (!confirm(`Execute deletion request #${id}? This permanently removes the customer.`)) return;
+    const resp = await fetch(`/api/admin/deletion-requests/${id}/execute`, { method: 'POST', headers: authHeaders() });
+    if (resp.ok) { loadDeletions(); loadStats(); }
+    else alert('Failed to execute deletion.');
+  };
+  document.getElementById('refresh-deletions-btn')?.addEventListener('click', loadDeletions);
 
   // ── Boot ────────────────────────────────────────────────────────
   if (getToken()) {

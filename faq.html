@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FAQ — Mapleproof</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="legal-styles.css">
+</head>
+<body>
+
+<nav class="legal-nav">
+  <div class="legal-nav-inner">
+    <a href="/" class="legal-brand">
+      <img src="logo-leaf-mark.png" alt="">
+      <span>Mapleproof</span>
+    </a>
+    <div class="legal-nav-links">
+      <a href="/faq">FAQ</a>
+      <a href="/retailers">For Retailers</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/app" class="legal-cta">Get my pass</a>
+    </div>
+  </div>
+</nav>
+
+<main class="legal">
+  <h1>Frequently asked questions</h1>
+  <p class="subtitle">The honest answers, including the parts that aren't flattering.</p>
+
+  <h2>The basics</h2>
+
+  <div class="faq-item">
+    <h3>Is this legal?</h3>
+    <p>Yes. Mapleproof is a tool to help retailers verify customer ages faster. It does not replace the legal requirement for retailers to check a valid government-issued ID at every transaction — Ontario law (Liquor Licence and Control Act, Cannabis Licence Act) requires that, and Mapleproof doesn't change it. Think of Mapleproof as a confidence layer that sits alongside the cashier's ID check, not instead of it.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>Why should I use this if the cashier still checks my ID?</h3>
+    <p>Three reasons:</p>
+    <ol>
+      <li><strong>Speed.</strong> When the cashier already sees a 19+ confirmed scan, the visual ID check goes faster.</li>
+      <li><strong>Privacy.</strong> Your ID information is encrypted and stored in one place rather than being seen and potentially photographed at every store you visit.</li>
+      <li><strong>Loyalty perks.</strong> Participating retailers may offer faster checkout, discounts, or rewards for verified customers (depending on the retailer's program).</li>
+    </ol>
+  </div>
+
+  <div class="faq-item">
+    <h3>What if my ID gets stolen?</h3>
+    <p>Stolen physical ID is a serious problem regardless of Mapleproof. As soon as you discover it, take three steps:</p>
+    <ol>
+      <li>Go to <a href="/delete">/delete</a> and request deletion of your Mapleproof account so the lost ID can't be linked to a passing pass.</li>
+      <li>Report the loss to the issuing authority (ServiceOntario for driver's licenses).</li>
+      <li>File a police report.</li>
+    </ol>
+    <p>If we detect suspicious patterns on your account, we may automatically place it on a fraud hold, which means the next time the pass is scanned the retailer will see "FRAUD HOLD" and refuse the sale until you re-verify.</p>
+  </div>
+
+  <h2>Privacy and security</h2>
+
+  <div class="faq-item">
+    <h3>What data do you actually keep about me?</h3>
+    <p>After registration we keep:</p>
+    <ul>
+      <li>Your name, DOB, ID expiry date, and ID number — all encrypted with AES-256-GCM</li>
+      <li>A cropped square of your face from the live capture</li>
+      <li>A circle-masked face from your ID</li>
+      <li>Country and city where you registered (not your IP address)</li>
+    </ul>
+    <p>We discard the full ID front and back images right after extracting what we need. Your ID number is never stored in plaintext — only as a one-way hash.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>Where is the encryption key kept?</h3>
+    <p>In a server-side environment variable, separately from the database. If our database is ever breached, the data inside it is unreadable without the key.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>Can the police access my data?</h3>
+    <p>Only with a valid court order, search warrant, or AGCO regulatory request. We do not voluntarily share data with anyone.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>Do you sell my data?</h3>
+    <p>No. We don't sell, rent, or share your data for advertising. We don't have a marketing analytics integration. We don't train AI models on your photos. Your data is used solely to deliver the verification service.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>How do I delete my account?</h3>
+    <p>Visit <a href="/delete">/delete</a>, enter your barcode token, and submit a deletion request. Under PIPEDA we will execute the deletion within 30 days. You can also email <a href="mailto:privacy@mapleproof.example">privacy@mapleproof.example</a>.</p>
+  </div>
+
+  <h2>How the technology works</h2>
+
+  <div class="faq-item">
+    <h3>What is a "liveness check"?</h3>
+    <p>It's a real-time test that proves you're a live human in front of the camera, not a printed photo or video being shown to the camera. We ask you to perform a sequence of head movements (left, right, up, down) in a randomized order. Because the order is random per session, a recorded video can't pass.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>Is the liveness check bulletproof against deepfakes?</h3>
+    <p>Honest answer: no. A sophisticated attacker with a real-time deepfake could potentially perform the head movements live. For most retail use cases, our level of liveness is appropriate (similar to what TikTok, Snapchat, and Uber use for casual identity verification). For very high-stakes use cases, AWS Rekognition Face Liveness is the industry standard at $0.015 per check.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>How is the photo match score calculated?</h3>
+    <p>We use face-api.js to extract a 128-dimensional vector ("descriptor") from your live face and from your ID photo, then compute the Euclidean distance between them. The smaller the distance, the more similar the faces. We map this to a 0-100% similarity score for display. Anything above 70% is a strong match. The whole computation runs on your device — your photos never leave your phone for the matching step.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>What if my ID photo doesn't look like me anymore?</h3>
+    <p>If your appearance has changed significantly (haircut, weight, glasses, new beard), the match score may be lower. The cashier will see this and rely on their visual ID check instead. If your ID photo is more than 5 years old or your appearance has changed dramatically, consider renewing your physical ID at ServiceOntario.</p>
+  </div>
+
+  <h2>For retailers</h2>
+
+  <div class="faq-item">
+    <h3>How does Mapleproof integrate with our POS?</h3>
+    <p>Currently, we don't have direct POS integrations. Cashiers use our retailer scanner web app on a tablet or phone alongside the existing POS. POS plugins for popular cannabis-retail systems (Cova, Greenline, Ample) are on our roadmap. Email <a href="mailto:hello@mapleproof.example">hello@mapleproof.example</a> if you want to be a beta tester.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>What happens during an AGCO inspection?</h3>
+    <p>You can show the AGCO inspector your retailer dashboard, which includes a tamper-evident audit log of every scan with timestamps. You can also export a monthly report. <strong>Important:</strong> the audit log is supplementary documentation. It does not relieve you of the requirement to physically check IDs.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>What does the cashier need to be trained on?</h3>
+    <p>About 5 minutes. Our retailer page (<a href="/retailers">/retailers</a>) has the training material. Key points: (1) always check the physical ID, (2) the colored banner tells you green/amber/red, (3) the photo on screen is for visual comparison, (4) red flags require sale refusal.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>How much does it cost?</h3>
+    <p>During the launch period, Mapleproof is free for both customers and retailers. We will introduce per-store pricing for retailers in 2027 (target $29-49/month per store). Customer use will remain free.</p>
+  </div>
+
+  <h2>Other</h2>
+
+  <div class="faq-item">
+    <h3>Does it work in other provinces?</h3>
+    <p>Right now Mapleproof is built for Ontario provincial driver's licenses and ID cards. We can read PDF417 barcodes from any Canadian province (the AAMVA format is shared), but the legal age tier (19+) is Ontario-specific. Quebec and Alberta have an 18+ minimum, which we'll add in a future release.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>I'm getting an error during liveness — what do I do?</h3>
+    <p>Try these in order:</p>
+    <ol>
+      <li>Make sure you're in a well-lit room (face the light, not a window behind you)</li>
+      <li>Remove sunglasses, hats, or anything obscuring your face</li>
+      <li>Hold your phone about arm's length away</li>
+      <li>If after 6 seconds the camera doesn't detect a movement you actually performed, tap the "Having trouble? Tap when done" button</li>
+      <li>If still failing, refresh the page and try again</li>
+    </ol>
+  </div>
+
+  <div class="faq-item">
+    <h3>Why is the marketing site sometimes slow?</h3>
+    <p>We host on Render's free tier which "sleeps" after 15 minutes of inactivity. The first request after a sleep takes ~30 seconds while the server wakes up. Once we have paying retailers we'll move to a paid tier with no sleep.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>Who built this?</h3>
+    <p>An independent developer in Toronto. We're not VC-backed and we're not part of any larger company. If you want to talk to us, <a href="mailto:hello@mapleproof.example">hello@mapleproof.example</a> goes to a human.</p>
+  </div>
+</main>
+
+<footer class="legal-footer">
+  <div class="legal-footer-inner">
+    <div>
+      <h4>Mapleproof</h4>
+      <p style="color: rgba(255,255,255,0.7); font-size: 13px; margin: 0;">Privacy-first age verification for Ontario.</p>
+    </div>
+    <div>
+      <h4>Product</h4>
+      <ul>
+        <li><a href="/app">Get my pass</a></li>
+        <li><a href="/retailers">For retailers</a></li>
+        <li><a href="/faq">FAQ</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Legal</h4>
+      <ul>
+        <li><a href="/privacy">Privacy Policy</a></li>
+        <li><a href="/terms">Terms of Service</a></li>
+        <li><a href="/delete">Delete my account</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Contact</h4>
+      <ul>
+        <li><a href="mailto:hello@mapleproof.example">hello@mapleproof.example</a></li>
+        <li><a href="mailto:privacy@mapleproof.example">privacy@mapleproof.example</a></li>
+      </ul>
+    </div>
+  </div>
+  <p class="footer-disclaimer" style="max-width: 1100px; margin: 30px auto 0; padding: 0 24px;">
+    Mapleproof is not a substitute for retailer ID verification. Retailers remain solely responsible for verifying valid government-issued ID at every transaction in accordance with Ontario law.
+  </p>
+</footer>
+
+</body>
+</html>

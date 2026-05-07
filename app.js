@@ -226,18 +226,23 @@ document.addEventListener('DOMContentLoaded', () => {
   const idBackThumb   = document.getElementById('id-back-thumb');
   const uploadStatus  = document.getElementById('upload-status-text');
   const processBtn    = document.getElementById('upload-process-btn');
+  const consentCheck  = document.getElementById('consent-check');
 
   function refreshProcessBtn() {
-    const ready = !!state.idFrontImage && !!state.idBackImage;
+    const haveBoth = !!state.idFrontImage && !!state.idBackImage;
+    const consented = consentCheck ? consentCheck.checked : false;
+    const ready = haveBoth && consented;
     if (processBtn) processBtn.disabled = !ready;
     if (uploadStatus) {
-      uploadStatus.textContent = ready
-        ? 'Ready to process. Tap "Process ID".'
-        : (state.idFrontImage ? 'Now add the back of your ID.'
+      uploadStatus.textContent = !haveBoth
+        ? (state.idFrontImage ? 'Now add the back of your ID.'
         :  state.idBackImage  ? 'Now add the front of your ID.'
-        :  'Add both sides of your ID to continue.');
+        :  'Add both sides of your ID to continue.')
+        : (!consented ? 'Tick the consent box to continue.' : 'Ready to process. Tap "Process ID".');
     }
   }
+
+  consentCheck?.addEventListener('change', refreshProcessBtn);
 
   async function handleIdImageFile(file, side) {
     if (!file) return;
@@ -908,19 +913,29 @@ async function saveAndGeneratePass() {
 
     if (savingMsg) savingMsg.textContent = 'Saving your pass…';
 
-    // ── 4) Submit to server (send the CROPPED live face — no background) ──
+    // ── 4) Submit to server ──
+    // We DO NOT send full ID images by default (privacy minimization).
+    // Server only stores the face crops; raw images are processed in-browser.
+    const consentEl = document.getElementById('consent-check');
+    const consentAccepted = consentEl ? consentEl.checked : false;
+    if (!consentAccepted) {
+      throw new Error('You must accept the privacy notice and terms to continue.');
+    }
+
     const response = await fetch('/api/register', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...state.parsed,
         faceImageData:  croppedLiveFace,                    // cropped live face for pass display
-        idFrontImage:   state.idFrontImage  || undefined,   // full ID front (for audit)
-        idBackImage:    state.idBackImage   || undefined,
+        // idFrontImage and idBackImage NOT sent by default — privacy minimization
         idFaceImage:    croppedIdFace || undefined,         // cropped ID face for pass display
         faceMatchScore: matchScore,
         livenessVerified:   !!state.liveDescriptor,
-        livenessChallenges: state.livenessChallenges || undefined
+        livenessChallenges: state.livenessChallenges || undefined,
+        consentAccepted:    true,
+        consentVersion:     '1.0',
+        ocrFrontText:       state.ocrFrontText || undefined  // browser-side OCR (not yet implemented)
       })
     });
 

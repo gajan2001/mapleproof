@@ -34,11 +34,10 @@
 
   const overlay         = document.getElementById('result-overlay');
   const card            = document.getElementById('result-card');
-  const toneStrip       = document.getElementById('res-tone-strip');
-  const titleEl         = document.getElementById('res-title');
-  const subtitleEl      = document.getElementById('res-subtitle');
-  const photoEl         = document.getElementById('res-photo');
-  const ageEl           = document.getElementById('res-age-badge');
+  const banner          = document.getElementById('result-banner');
+  const bannerText      = document.getElementById('banner-text');
+  const livePhotoEl     = document.getElementById('res-live-photo');
+  const idPhotoEl       = document.getElementById('res-id-photo');
   const statusEl        = document.getElementById('res-status');
   const matchEl         = document.getElementById('res-match');
   const scansEl         = document.getElementById('res-scans');
@@ -46,6 +45,29 @@
   const flagsList       = document.getElementById('res-flags-list');
   const countdownNum    = document.getElementById('countdown-num');
   const countdownArc    = document.getElementById('countdown-prog');
+  const flagFraudBtn    = document.getElementById('flag-fraud-btn');
+
+  // Settings modal
+  const settingsBtn       = document.getElementById('settings-btn');
+  const settingsOverlay   = document.getElementById('settings-overlay');
+  const apiKeyInput       = document.getElementById('api-key-input');
+  const saveApiKeyBtn     = document.getElementById('save-api-key-btn');
+  const clearApiKeyBtn    = document.getElementById('clear-api-key-btn');
+  const closeSettingsBtn  = document.getElementById('close-settings-btn');
+  const settingsStatus    = document.getElementById('settings-status');
+
+  // ── Retailer API key (stored only in this browser) ──
+  let currentToken = null;  // currently-displayed pass token (for flag-fraud)
+  function getApiKey() {
+    try { return localStorage.getItem('mapleproof_api_key') || ''; } catch { return ''; }
+  }
+  function setApiKey(k) {
+    try { if (k) localStorage.setItem('mapleproof_api_key', k); else localStorage.removeItem('mapleproof_api_key'); } catch {}
+  }
+  function authHeaders() {
+    const key = getApiKey();
+    return key ? { 'Authorization': 'Bearer ' + key } : {};
+  }
 
   let codeReader = null;
   let lastScannedToken = '';
@@ -221,7 +243,7 @@
     try {
       const resp = await fetch(`/api/pass/${encodeURIComponent(token)}`, {
         method: 'GET',
-        headers: { 'Accept': 'application/json' }
+        headers: { 'Accept': 'application/json', ...authHeaders() }
       });
       console.log('[mapleproof] Response status:', resp.status);
 
@@ -238,9 +260,10 @@
       if (resp.status === 404 || (!resp.ok && !data.ok)) {
         showResult({
           tone: 'denied',
-          title: 'Pass not found',
-          subtitle: data.error || `No record for "${token}". Check ID directly.`,
-          photo: '', age: '—', status: 'Not registered', scans: '—',
+          token: null,
+          bannerText: 'NOT FOUND',
+          livePhoto: '', idPhoto: '',
+          age: '—', status: 'Not registered', match: '—', matchStatus: 'unknown', scans: '—',
           flags: ['UNKNOWN_PASS']
         });
         return;
@@ -254,12 +277,14 @@
       const r = data.publicRecord;
       const isExpired   = r.expiryStatus === 'expired';
       const isUnder     = r.ageBadge === '18+' || r.ageBadge === 'UNDER';
+      const fraudHold   = !!r.fraudHold;
       const matchStatus = r.faceMatchStatus || 'unknown';
       const matchScore  = r.faceMatchScore;
       const matchFail   = matchStatus === 'fail';
       const matchWeak   = matchStatus === 'weak';
 
-      const tone = (isExpired || isUnder || matchFail)
+      // Tone selection: any blocking issue → denied; any caution → warning; else approved.
+      const tone = (fraudHold || isExpired || isUnder || matchFail)
         ? 'denied'
         : ((matchWeak || (r.flags && r.flags.length)) ? 'warning' : 'approved');
 
@@ -272,17 +297,21 @@
                   : `${pct}%`;
       }
 
+      // Big banner text
+      let bannerText;
+      if (fraudHold)        bannerText = '⚠ FRAUD HOLD · REFUSE SALE';
+      else if (isExpired)   bannerText = '⛔ ID EXPIRED';
+      else if (isUnder)     bannerText = '⛔ UNDER 19';
+      else if (matchFail)   bannerText = '⛔ PHOTO MISMATCH';
+      else if (tone === 'warning') bannerText = `⚠ ${r.ageBadge} · CHECK ID CAREFULLY`;
+      else                  bannerText = `✓ VERIFIED · ${r.ageBadge}`;
+
       showResult({
         tone,
-        title: tone === 'approved' ? 'Verified'
-              : tone === 'warning' ? 'Verified — see alerts'
-              : 'NOT VERIFIED',
-        subtitle: tone === 'approved'
-              ? 'Photo match confirmed'
-              : tone === 'warning'
-              ? 'Cashier discretion advised'
-              : (matchFail ? 'Photo does not match ID' : 'Cashier discretion required'),
-        photo: r.faceImage,
+        token,
+        bannerText,
+        livePhoto: r.faceImage,
+        idPhoto:   r.idFaceImage || r.faceImage,
         age: r.ageBadge,
         status: r.verified ? 'Registered & verified' : 'Registered · check ID',
         match: matchText,
@@ -299,25 +328,41 @@
   function showError(msg) {
     showResult({
       tone: 'denied',
-      title: 'Lookup failed',
-      subtitle: msg,
-      photo: '', age: '—', status: '—', match: '—', matchStatus: 'unknown', scans: '—',
+      token: null,
+      bannerText: 'LOOKUP FAILED',
+      livePhoto: '', idPhoto: '',
+      age: '—', status: msg, match: '—', matchStatus: 'unknown', scans: '—',
       flags: []
     });
   }
 
   // ── RENDER RESULT ──────────────────────────────────────────────
   function showResult(r) {
+    currentToken = r.token || null;
+
+    // Big colored banner
+    banner.className = 'result-banner';
+    if      (r.tone === 'approved') banner.classList.add('banner-approved');
+    else if (r.tone === 'warning')  banner.classList.add('banner-warning');
+    else                            banner.classList.add('banner-denied');
+    bannerText.textContent = r.bannerText;
+
+    // Tone class on card (for any other styling hooks)
     card.classList.remove('tone-approved', 'tone-warning', 'tone-denied');
     card.classList.add(`tone-${r.tone}`);
 
-    titleEl.textContent      = r.title;
-    subtitleEl.textContent   = r.subtitle;
-    photoEl.src              = r.photo || '';
-    photoEl.style.display    = r.photo ? 'block' : 'none';
-    ageEl.textContent        = r.age;
-    statusEl.textContent     = r.status;
-    scansEl.textContent      = r.scans;
+    // Twin photos
+    if (livePhotoEl) {
+      livePhotoEl.src = r.livePhoto || '';
+      livePhotoEl.style.visibility = r.livePhoto ? 'visible' : 'hidden';
+    }
+    if (idPhotoEl) {
+      idPhotoEl.src = r.idPhoto || '';
+      idPhotoEl.style.visibility = r.idPhoto ? 'visible' : 'hidden';
+    }
+
+    statusEl.textContent = r.status;
+    scansEl.textContent  = r.scans;
 
     if (matchEl) {
       matchEl.textContent = r.match || '—';
@@ -336,10 +381,15 @@
       flagsList.innerHTML = '';
     }
 
+    // Flag-fraud button only available when we have a real token
+    if (flagFraudBtn) {
+      flagFraudBtn.disabled = !currentToken;
+      flagFraudBtn.textContent = '⚠ Flag as fraud';
+    }
+
     overlay.hidden = false;
     overlay.scrollTop = 0;
 
-    // Audible feedback
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       const o = ctx.createOscillator(), g = ctx.createGain();
@@ -399,6 +449,7 @@
   // ── HELPERS ────────────────────────────────────────────────────
   function flagDescription(flag) {
     switch (flag) {
+      case 'FRAUD_HOLD':        return 'FRAUD HOLD — refuse sale and verify physical ID';
       case 'UNDER_LEGAL_AGE':   return 'Customer is under the legal age tier';
       case 'CLOSE_TO_LIMIT':    return 'Age is close to legal minimum — check ID carefully';
       case 'ID_EXPIRED':        return 'Government ID is EXPIRED — refuse sale';
@@ -408,11 +459,73 @@
       case 'PHOTO_MATCH_FAIL':  return 'Selfie does NOT match ID photo — verify visually';
       case 'PHOTO_MATCH_WEAK':  return 'Selfie / ID photo match is weak — verify visually';
       case 'NO_LIVENESS_CHECK': return 'No liveness check performed at registration';
+      case 'OCR_MISMATCH':      return 'ID front text doesn\'t match back barcode — possibly tampered';
+      case 'GEO_ANOMALY':       return 'Pass registered in a different country — possible stolen account';
       default:                  return flag;
     }
   }
 
+  // ── FLAG AS FRAUD ─────────────────────────────────────────────
+  flagFraudBtn?.addEventListener('click', async () => {
+    if (!currentToken) return;
+    const reason = prompt('Why are you flagging this pass as fraud? (e.g. "ID didn\'t match person")');
+    if (!reason || !reason.trim()) return;
+    if (!getApiKey()) {
+      alert('You need to configure your retailer API key in Settings before flagging passes.');
+      return;
+    }
+    flagFraudBtn.disabled = true;
+    flagFraudBtn.textContent = 'Flagging…';
+    try {
+      const resp = await fetch('/api/retailer/flag-fraud', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ token: currentToken, reason: reason.trim() })
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        flagFraudBtn.textContent = '✓ Flagged';
+      } else {
+        alert('Flag failed: ' + (data.error || 'unknown error'));
+        flagFraudBtn.disabled = false;
+        flagFraudBtn.textContent = '⚠ Flag as fraud';
+      }
+    } catch (err) {
+      alert('Network error.');
+      flagFraudBtn.disabled = false;
+      flagFraudBtn.textContent = '⚠ Flag as fraud';
+    }
+  });
+
+  // ── SETTINGS (API key) ────────────────────────────────────────
+  settingsBtn?.addEventListener('click', () => {
+    apiKeyInput.value = getApiKey() || '';
+    settingsStatus.textContent = '';
+    settingsOverlay.hidden = false;
+  });
+  closeSettingsBtn?.addEventListener('click', () => { settingsOverlay.hidden = true; });
+  settingsOverlay?.addEventListener('click', (e) => { if (e.target === settingsOverlay) settingsOverlay.hidden = true; });
+  saveApiKeyBtn?.addEventListener('click', () => {
+    const key = (apiKeyInput.value || '').trim();
+    if (!key.startsWith('mk_')) {
+      settingsStatus.style.color = '#c8362b';
+      settingsStatus.textContent = 'API keys start with "mk_". Check what you pasted.';
+      return;
+    }
+    setApiKey(key);
+    settingsStatus.style.color = '#1f6f48';
+    settingsStatus.textContent = '✓ Saved. Future scans will be logged to your store.';
+  });
+  clearApiKeyBtn?.addEventListener('click', () => {
+    setApiKey('');
+    apiKeyInput.value = '';
+    settingsStatus.style.color = '#5a7065';
+    settingsStatus.textContent = 'API key cleared. Future scans will log as anonymous.';
+  });
+
   // ── BOOT ──────────────────────────────────────────────────────
-  // Focus the manual input by default for USB barcode scanners (HID typing)
   manualInput.focus();
+  if (!getApiKey()) {
+    console.info('[mapleproof] No retailer API key set. Scans will log as anonymous. Open Settings to add one.');
+  }
 })();

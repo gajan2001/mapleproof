@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy — Mapleproof</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="legal-styles.css">
+</head>
+<body>
+
+<nav class="legal-nav">
+  <div class="legal-nav-inner">
+    <a href="/" class="legal-brand">
+      <img src="logo-leaf-mark.png" alt="">
+      <span>Mapleproof</span>
+    </a>
+    <div class="legal-nav-links">
+      <a href="/faq">FAQ</a>
+      <a href="/retailers">For Retailers</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/app" class="legal-cta">Get my pass</a>
+    </div>
+  </div>
+</nav>
+
+<main class="legal">
+  <h1>Privacy Policy</h1>
+  <p class="subtitle">Last updated: May 4, 2026 · Effective for all users</p>
+
+  <div class="callout">
+    <strong>The short version</strong>
+    Mapleproof handles government ID information. We collect only what is necessary to verify your age, encrypt everything at rest, never sell your data, and let you delete your account anytime. This page explains exactly what we do — please read it before signing up.
+  </div>
+
+  <h2>1. Who we are</h2>
+  <p>Mapleproof is a digital age-verification service operated in Ontario, Canada. This Privacy Policy covers how we collect, use, store, and disclose personal information when you use our website (mapleproof.onrender.com), our customer kiosk, our retailer scanner, and any related services.</p>
+
+  <p>If you have questions about this policy or want to exercise your privacy rights, contact our Privacy Officer at <a href="mailto:privacy@mapleproof.example">privacy@mapleproof.example</a>.</p>
+
+  <h2>2. What we collect</h2>
+
+  <h3>From customers (people getting a pass)</h3>
+  <ul>
+    <li><strong>Government ID information</strong> read from the PDF417 barcode on your provincial driver's licence or photo ID card. This includes your name, date of birth, document expiry date, and ID number.</li>
+    <li><strong>Photos</strong> of the front and back of your ID, used briefly to extract the barcode and to crop your face.</li>
+    <li><strong>A live photo of your face</strong> captured during the liveness check.</li>
+    <li><strong>Liveness check data</strong> — which head movements you performed and whether they were verified.</li>
+    <li><strong>Approximate location</strong> — country and city derived from your IP address (we do not store the IP itself in your customer record).</li>
+    <li><strong>Device fingerprint</strong> — a non-tracking hash used only for fraud prevention.</li>
+  </ul>
+
+  <h3>From retailers (stores using our scanner)</h3>
+  <ul>
+    <li>Business name, store location, contact email, and an API key hash.</li>
+    <li>Logs of which passes were scanned at which store, and when.</li>
+  </ul>
+
+  <h3>Automatically collected</h3>
+  <ul>
+    <li>Standard web logs (IP, user agent, timestamps) for security and debugging — kept for 30 days.</li>
+  </ul>
+
+  <h2>3. What we do with it</h2>
+  <p>We use your information for these purposes only:</p>
+  <ol>
+    <li><strong>Age verification.</strong> Calculating whether you are 19+ for legal purchases of alcohol, cannabis, and similar age-restricted products in Ontario.</li>
+    <li><strong>Identity binding.</strong> Matching your live face to your ID photo so retailers know the pass actually belongs to you.</li>
+    <li><strong>Fraud prevention.</strong> Detecting patterns like repeated registrations from the same device with different IDs.</li>
+    <li><strong>Audit and compliance.</strong> Maintaining a tamper-evident log of who scanned which pass when, for AGCO inspections.</li>
+    <li><strong>Security.</strong> Preventing abuse of the service.</li>
+  </ol>
+  <p>We do <strong>not</strong> use your information for advertising, marketing analytics, training third-party AI models, or any purpose unrelated to the service.</p>
+
+  <h2>4. What we don't keep</h2>
+  <p>By default, we discard the full-resolution images of your ID front and back as soon as we've extracted what we need. Only these stay in our database:</p>
+  <ul>
+    <li>A cropped square of just your face from the live capture</li>
+    <li>A cropped, circle-masked face from the front of your ID</li>
+    <li>The AAMVA fields parsed from the barcode (name, DOB, expiry, ID number — all encrypted)</li>
+  </ul>
+  <p>Your ID number is never stored in plaintext — only as a keyed HMAC-SHA256 hash, which lets us detect duplicate registrations without ever being able to reconstruct the original number.</p>
+
+  <h2>5. How long we keep it</h2>
+  <p>We follow strict data minimization:</p>
+  <ul>
+    <li><strong>Customer pass data</strong>: automatically deleted after 24 months of no scans (you'd need to re-register).</li>
+    <li><strong>Audit logs</strong>: retained for 5 years for compliance, then permanently deleted.</li>
+    <li><strong>Web server logs</strong>: 30 days.</li>
+    <li><strong>Deletion request records</strong>: kept indefinitely so we can prove a deletion happened.</li>
+  </ul>
+  <p>You can request earlier deletion at any time — see Section 7.</p>
+
+  <h2>6. Encryption and security</h2>
+  <p>We take security seriously because we have to.</p>
+  <ul>
+    <li>All sensitive fields (DOB, name, face crop, ID face crop) are encrypted at rest using AES-256-GCM.</li>
+    <li>The encryption key is stored separately from the database, in a server-side environment variable.</li>
+    <li>All traffic between your browser and our server uses HTTPS (TLS 1.3).</li>
+    <li>The liveness check, face cropping, and face matching all happen <em>on your device</em> — your live video is never streamed to our servers.</li>
+    <li>Our retailer API requires a hashed API key for every request.</li>
+    <li>We maintain a tamper-evident audit log: every action is hashed in a chain so we can detect any unauthorized modification.</li>
+    <li>Rate limits prevent brute-force or scraping attempts.</li>
+  </ul>
+
+  <h2>7. Your rights under PIPEDA</h2>
+  <p>You have the following rights under Canada's Personal Information Protection and Electronic Documents Act and Ontario's privacy law:</p>
+  <ul>
+    <li><strong>Right to access</strong> — see what we have about you. Email privacy@mapleproof.example with your token.</li>
+    <li><strong>Right to correction</strong> — fix inaccurate information. Re-register with corrected details.</li>
+    <li><strong>Right to deletion</strong> — request permanent removal of all data. Visit <a href="/delete">/delete</a> or email us. We will execute deletion within 30 days.</li>
+    <li><strong>Right to withdraw consent</strong> — at any time, with the same effect as deletion.</li>
+    <li><strong>Right to complain</strong> — to us first, then to the <a href="https://www.priv.gc.ca/" target="_blank" rel="noopener">Office of the Privacy Commissioner of Canada</a> if unsatisfied.</li>
+  </ul>
+
+  <h2>8. Data breach notification</h2>
+  <p>If we have a breach of security safeguards involving your personal information that creates a real risk of significant harm to you, we will:</p>
+  <ul>
+    <li>Notify you without unreasonable delay (typically within 72 hours)</li>
+    <li>Notify the Office of the Privacy Commissioner of Canada</li>
+    <li>Maintain records of the breach</li>
+    <li>Take steps to mitigate further harm</li>
+  </ul>
+
+  <h2>9. Sharing with third parties</h2>
+  <p>We share information in only these specific cases:</p>
+  <ul>
+    <li><strong>With retailers</strong>: when you walk into a participating store and present your barcode, the retailer's scanner receives your age tier, photo for visual comparison, and verification flags. They do <em>not</em> receive your name, full DOB, or ID number.</li>
+    <li><strong>With our infrastructure provider</strong>: our hosting (Render.com) and IP geolocation (ipapi.co) handle data on our behalf under their respective contracts.</li>
+    <li><strong>If legally required</strong>: in response to a valid court order, search warrant, or AGCO regulatory request.</li>
+  </ul>
+  <p>We <strong>never</strong> sell your information.</p>
+
+  <h2>10. International transfers</h2>
+  <p>Our database is hosted in a Canadian data region. Some logs may transit through US-based CDNs (Cloudflare). Where data leaves Canada, it is protected by the same encryption and access controls.</p>
+
+  <h2>11. Children</h2>
+  <p>Mapleproof is for people 19 and older purchasing age-restricted products. We do not knowingly collect information from anyone under 18. If you are a parent or guardian and believe your child has registered, contact us and we will delete the account immediately.</p>
+
+  <h2>12. Changes to this policy</h2>
+  <p>If we materially change this policy, we will post a notice on the home page and require re-consent from active users before the next scan. Minor clarifications may be made without notice but will be reflected in the "Last updated" date.</p>
+
+  <h2>13. Contact</h2>
+  <p>Privacy Officer: <a href="mailto:privacy@mapleproof.example">privacy@mapleproof.example</a></p>
+  <p>For complaints under PIPEDA, you may also contact the Office of the Privacy Commissioner of Canada at <a href="https://www.priv.gc.ca/" target="_blank" rel="noopener">priv.gc.ca</a> or 1-800-282-1376.</p>
+</main>
+
+<footer class="legal-footer">
+  <div class="legal-footer-inner">
+    <div>
+      <h4>Mapleproof</h4>
+      <p style="color: rgba(255,255,255,0.7); font-size: 13px; margin: 0;">Privacy-first age verification for Ontario.</p>
+    </div>
+    <div>
+      <h4>Product</h4>
+      <ul>
+        <li><a href="/app">Get my pass</a></li>
+        <li><a href="/retailers">For retailers</a></li>
+        <li><a href="/faq">FAQ</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Legal</h4>
+      <ul>
+        <li><a href="/privacy">Privacy Policy</a></li>
+        <li><a href="/terms">Terms of Service</a></li>
+        <li><a href="/delete">Delete my account</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Contact</h4>
+      <ul>
+        <li><a href="mailto:hello@mapleproof.example">hello@mapleproof.example</a></li>
+        <li><a href="mailto:privacy@mapleproof.example">privacy@mapleproof.example</a></li>
+      </ul>
+    </div>
+  </div>
+  <p class="footer-disclaimer" style="max-width: 1100px; margin: 30px auto 0; padding: 0 24px;">
+    Mapleproof is not a substitute for retailer ID verification. Retailers remain solely responsible for verifying valid government-issued ID at every transaction in accordance with Ontario's Liquor Licence and Control Act, 2019, the Cannabis Licence Act, 2018, and applicable AGCO regulations.
+  </p>
+</footer>
+
+</body>
+</html>

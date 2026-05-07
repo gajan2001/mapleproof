@@ -8,6 +8,88 @@
   <link rel="apple-touch-icon" href="favicon.png">
   <meta name="theme-color" content="#1f6f48">
   <link rel="stylesheet" href="styles.css">
+  <style>
+    .admin-tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 2px solid var(--line, #e2ebe5);
+      margin-bottom: 24px;
+      overflow-x: auto;
+    }
+    .admin-tabs button {
+      background: none;
+      border: none;
+      padding: 12px 20px;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--muted, #5a7065);
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      white-space: nowrap;
+    }
+    .admin-tabs button.active {
+      color: var(--green, #1f6f48);
+      border-bottom-color: var(--green, #1f6f48);
+    }
+    .admin-tab-panel { display: none; }
+    .admin-tab-panel.active { display: block; }
+    .audit-table, .retailer-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 1px 2px rgba(13,51,38,0.04);
+    }
+    .audit-table th, .retailer-table th {
+      text-align: left;
+      padding: 12px 14px;
+      background: #f3f7f4;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--ink-soft, #2d4438);
+      border-bottom: 1px solid #e2ebe5;
+    }
+    .audit-table td, .retailer-table td {
+      padding: 12px 14px;
+      font-size: 13px;
+      border-bottom: 1px solid #eef3ef;
+      vertical-align: top;
+    }
+    .audit-table tbody tr:hover, .retailer-table tbody tr:hover { background: #fafdfb; }
+    .audit-table .col-ts { font-family: monospace; font-size: 11px; color: #5a7065; white-space: nowrap; }
+    .audit-table .col-action { font-family: monospace; font-weight: 600; color: #1f6f48; font-size: 11px; }
+    .audit-table .col-target { font-family: monospace; font-size: 11px; color: #2d4438; }
+    .audit-table .col-details { font-family: monospace; font-size: 11px; color: #5a7065; max-width: 300px; word-break: break-all; }
+    .integrity-banner {
+      padding: 14px 18px;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .integrity-ok    { background: #e8f1ec; color: #1f6f48; border: 1px solid #b5d6c2; }
+    .integrity-bad   { background: #fceeec; color: #c8362b; border: 1px solid #f0baba; }
+    .retailer-badge-active   { background: #e8f1ec; color: #1f6f48; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .retailer-badge-pending  { background: #fef5e9; color: #b85510; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .stat-warn strong { color: #b85510; }
+    .stat-danger strong { color: #c8362b; }
+    .btn-mini {
+      background: #1f6f48; color: #fff; border: none;
+      padding: 6px 12px; border-radius: 6px;
+      font-family: inherit; font-size: 12px; font-weight: 600;
+      cursor: pointer; margin-right: 4px;
+    }
+    .btn-mini:hover { background: #2d8a3e; }
+    .btn-mini.btn-mini-danger { background: #c8362b; }
+    .btn-mini.btn-mini-danger:hover { background: #d63a2e; }
+    .btn-mini.btn-mini-ghost { background: transparent; color: #5a7065; border: 1px solid #e2ebe5; }
+    .btn-mini.btn-mini-ghost:hover { background: #f3f7f4; }
+  </style>
 </head>
 <body>
   <div class="bg-decor"></div>
@@ -21,40 +103,120 @@
     <div class="topbar-meta"><a class="topbar-link" href="/app">← Customer kiosk</a></div>
   </header>
 
-  <!-- ─── LOGIN SCREEN ─── -->
+  <!-- ─── LOGIN ─── -->
   <section id="login-section" class="container admin-login">
     <div class="login-card">
       <h2>Admin sign-in</h2>
-      <p>Enter the admin token shown in your server console.</p>
+      <p>Enter the admin token from your server environment.</p>
       <input type="password" id="admin-token-input" placeholder="Paste your admin token" autocomplete="off">
       <button id="login-btn" class="btn-primary">Sign in</button>
       <p id="login-error" class="login-error" hidden></p>
-      <p class="hint">Find this token printed in the terminal where you ran <code>node server.js</code>, or in the file <code>data/.admin-token</code>.</p>
+      <p class="hint">Find this in the <code>MAPLEPROOF_ADMIN_TOKEN</code> environment variable, or printed in the terminal on first run.</p>
     </div>
   </section>
 
-  <!-- ─── ADMIN DASHBOARD ─── -->
+  <!-- ─── DASHBOARD ─── -->
   <section id="admin-section" class="container admin" hidden>
     <header class="admin-head">
-      <h2>Registered users</h2>
+      <h2>Admin dashboard</h2>
       <button id="logout-btn" class="btn-ghost">Sign out</button>
     </header>
 
     <div id="stats-row" class="stats-row">
-      <div class="stat-card"><label>Total</label><strong id="stat-total">—</strong></div>
+      <div class="stat-card"><label>Total customers</label><strong id="stat-total">—</strong></div>
       <div class="stat-card"><label>19+ tier</label><strong id="stat-19">—</strong></div>
       <div class="stat-card"><label>25+ tier</label><strong id="stat-25">—</strong></div>
       <div class="stat-card"><label>Expired ID</label><strong id="stat-expired">—</strong></div>
       <div class="stat-card"><label>Total scans</label><strong id="stat-scans">—</strong></div>
+      <div class="stat-card stat-danger"><label>Fraud holds</label><strong id="stat-fraud">—</strong></div>
+      <div class="stat-card stat-warn"><label>Pending deletions</label><strong id="stat-deletions">—</strong></div>
+      <div class="stat-card"><label>Active retailers</label><strong id="stat-retailers">—</strong></div>
+      <div class="stat-card stat-warn"><label>Pending retailers</label><strong id="stat-retailers-pending">—</strong></div>
     </div>
 
-    <div class="admin-tools">
-      <input type="search" id="search-input" placeholder="Search by token…">
-      <button id="refresh-btn" class="btn-ghost">↻ Refresh</button>
+    <div class="admin-tabs">
+      <button data-tab="users"     class="active">Customers</button>
+      <button data-tab="retailers">Retailers</button>
+      <button data-tab="audit">Audit log</button>
+      <button data-tab="deletions">Pending deletions</button>
     </div>
 
-    <div id="users-grid" class="users-grid"></div>
-    <p id="users-empty" class="empty" hidden>No users registered yet.</p>
+    <!-- USERS -->
+    <div id="tab-users" class="admin-tab-panel active">
+      <div class="admin-tools">
+        <input type="search" id="search-input" placeholder="Search by token…">
+        <button id="refresh-btn" class="btn-ghost">↻ Refresh</button>
+      </div>
+      <div id="users-grid" class="users-grid"></div>
+      <p id="users-empty" class="empty" hidden>No users registered yet.</p>
+    </div>
+
+    <!-- RETAILERS -->
+    <div id="tab-retailers" class="admin-tab-panel">
+      <div class="admin-tools">
+        <button id="refresh-retailers-btn" class="btn-ghost">↻ Refresh</button>
+      </div>
+      <table class="retailer-table">
+        <thead>
+          <tr>
+            <th>Business</th>
+            <th>Store</th>
+            <th>Email</th>
+            <th>Created</th>
+            <th>Last used</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="retailers-tbody">
+          <tr><td colspan="7" style="text-align:center; color:#5a7065; padding:30px;">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- AUDIT -->
+    <div id="tab-audit" class="admin-tab-panel">
+      <div class="admin-tools">
+        <button id="verify-audit-btn" class="btn-primary">Verify integrity</button>
+        <button id="refresh-audit-btn" class="btn-ghost">↻ Refresh</button>
+      </div>
+      <div id="audit-integrity-banner"></div>
+      <table class="audit-table">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Actor</th>
+            <th>Action</th>
+            <th>Target</th>
+            <th>IP</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody id="audit-tbody">
+          <tr><td colspan="6" style="text-align:center; color:#5a7065; padding:30px;">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- DELETIONS -->
+    <div id="tab-deletions" class="admin-tab-panel">
+      <div class="admin-tools">
+        <button id="refresh-deletions-btn" class="btn-ghost">↻ Refresh</button>
+      </div>
+      <table class="audit-table">
+        <thead>
+          <tr>
+            <th>Token</th>
+            <th>Requested</th>
+            <th>Reason</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="deletions-tbody">
+          <tr><td colspan="4" style="text-align:center; color:#5a7065; padding:30px;">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
   <!-- Confirm-delete dialog -->
