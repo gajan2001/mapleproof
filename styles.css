@@ -1848,3 +1848,28 @@ hr,.divider,.perforation{border-color:var(--border) !important}
 .upload-card:hover{border-color:var(--brand) !important;background:rgba(212,168,56,.04) !important}
 .upload-thumb svg{stroke:var(--brand)}
 .upload-label{color:var(--text-2) !important}
+
+/* ═══ v11 — OCR REVIEW + UPLOAD STATES ═══ */
+.review-banner{
+  background:rgba(212,168,56,.10);border:1px solid var(--border);
+  color:var(--text-2);border-radius:12px;padding:13px 16px;margin-bottom:18px;
+  font-size:13.5px;line-height:1.5}
+.review-banner.warn{
+  background:rgba(232,176,74,.12);border-color:rgba(232,176,74,.4);color:#f0c674}
+.upload-card.single.disabled,.upload-card.disabled{
+  opacity:.45;pointer-events:none;filter:grayscale(.3)}
+#ocr-progress{margin-top:4px}
+.scan-status[data-tone="bad"] #upload-status-text,
+.scan-status[data-tone="bad"]{color:var(--bad) !important}
+.upload-thumb.has-image{
+  background-size:cover !important;background-position:center !important;
+  min-height:180px;border-radius:12px;position:relative}
+.upload-thumb.has-image svg,.upload-thumb.has-image .upload-label,
+.upload-thumb.has-image .upload-hint{
+  background:rgba(6,5,4,.66);color:#f6f1e6;padding:4px 8px;border-radius:6px;
+  position:relative;z-index:1}
+.upload-thumb.has-image::after{
+  content:"✓ Uploaded — tap to replace";position:absolute;left:0;right:0;bottom:0;
+  background:linear-gradient(transparent,rgba(6,5,4,.85));color:var(--brand);
+  font-size:12px;font-weight:600;padding:14px 0 8px;text-align:center}
+.id-type-selector select{font-weight:500}

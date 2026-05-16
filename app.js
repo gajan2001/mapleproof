@@ -108,13 +108,27 @@ function renderCode128(svgEl, text, opts = {}) {
   }
 }
 
-// ── ID TYPE LABELS ────────────────────────────────────────────────
+// ── ID TYPE CONFIG (accepted Canadian documents) ──────────────────
 const ID_TYPE_LABELS = {
-  passport:         'Passport',
-  drivers_license:  "Driver's License",
-  national_id:      'National ID',
-  state_id:         'State/Provincial ID',
-  residence_permit: 'Residence Permit'
+  ontario_dl:         "Ontario Driver's Licence",
+  passport_ca:        'Canadian Passport',
+  citizenship_card:   'Canadian Citizenship Card',
+  caf_id:             'Canadian Armed Forces ID Card',
+  indian_status:      'Secure Certificate of Indian Status',
+  pr_card:            'Permanent Resident Card',
+  ontario_photo_card: 'Ontario Photo Card'
+};
+
+// Keywords expected on each document. The upload must contain enough of
+// these (plus a face and a date) or it is rejected as "not a valid ID".
+const ID_TYPE_KEYWORDS = {
+  ontario_dl:         ['ONTARIO','DRIVER','LICENCE','LICENSE','PERMIS','CONDUIRE','DL'],
+  passport_ca:        ['PASSPORT','PASSEPORT','CANADA','TYPE P','P<CAN'],
+  citizenship_card:   ['CITIZENSHIP','CITOYENNETE','CITOYENNETÉ','CANADA','CITIZEN'],
+  caf_id:             ['CANADIAN ARMED FORCES','ARMED FORCES','FORCES','DEFENCE','DEFENSE','NATIONAL DEFENCE','MILITARY','CAF'],
+  indian_status:      ['INDIAN STATUS','SECURE CERTIFICATE','STATUS','INDIAN','CERTIFICATE','CANADA'],
+  pr_card:            ['PERMANENT RESIDENT','RESIDENT','RÉSIDENT','RESIDENT PERMANENT','CANADA','PR'],
+  ontario_photo_card: ['ONTARIO','PHOTO CARD','PHOTO','CARD']
 };
 
 // ── STATE ──────────────────────────────────────────────────────────
@@ -131,6 +145,7 @@ const state = {
     idNumber: '', expiry: '', country: ''
   },
   truliooReference: null,
+  ocrConfidence:  null,
   serverPublicRecord: null
 };
 
@@ -264,95 +279,320 @@ async function compareFaces(selfieDataUrl, idPhotoDataUrl) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-//  PHASE 1 — ID DETAILS FORM (worldwide, manual entry)
+//  ID PARSING HELPERS (browser-side OCR via Tesseract.js)
+// ─────────────────────────────────────────────────────────────────
+
+// Parse many date formats → YYYY-MM-DD (or null)
+function normalizeDate(raw) {
+  if (!raw) return null;
+  raw = raw.trim().replace(/[.\s]/g, '/').replace(/-/g, '/');
+  const MON = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+  let m;
+  // YYYY/MM/DD
+  if ((m = raw.match(/\b(\d{4})\/(\d{1,2})\/(\d{1,2})\b/))) {
+    return `${m[1]}-${String(+m[2]).padStart(2,'0')}-${String(+m[3]).padStart(2,'0')}`;
+  }
+  // DD/MM/YYYY  (also handles MM/DD/YYYY ambiguity → prefer DD/MM if >12)
+  if ((m = raw.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/))) {
+    let d = +m[1], mo = +m[2];
+    if (d > 12 && mo <= 12) { /* keep */ }
+    else if (mo > 12 && d <= 12) { [d, mo] = [mo, d]; }
+    return `${m[3]}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  }
+  // DD MON YYYY
+  if ((m = raw.match(/\b(\d{1,2})\/?([a-zA-Z]{3})[a-zA-Z]*\/?(\d{4})\b/))) {
+    const mo = MON[m[2].toLowerCase()];
+    if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${String(+m[1]).padStart(2,'0')}`;
+  }
+  // YYMMDD (MRZ)
+  if ((m = raw.match(/\b(\d{2})(\d{2})(\d{2})\b/))) {
+    const yy = +m[1]; const year = yy < 30 ? 2000 + yy : 1900 + yy;
+    if (+m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31)
+      return `${year}-${m[2]}-${m[3]}`;
+  }
+  return null;
+}
+
+// Pull all plausible dates out of OCR text, in order
+function findDates(text) {
+  const out = [];
+  const re = /\b(\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{1,2}[\/\-.\s][A-Za-z]{3,9}[\/\-.\s]\d{4}|\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{4})\b/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const n = normalizeDate(m[1]);
+    if (n) out.push(n);
+  }
+  return out;
+}
+
+// Parse passport MRZ (TD3, 2 lines of 44). Returns {lastName,firstName,docNumber,dob,expiry,country} or null
+function parseMRZ(text) {
+  const lines = text.toUpperCase().split(/\n/).map(l => l.replace(/\s/g, ''));
+  const mrz = lines.filter(l => /^[A-Z0-9<]{30,}$/.test(l) && l.includes('<'));
+  if (mrz.length < 2) return null;
+  const l1 = mrz[mrz.length - 2], l2 = mrz[mrz.length - 1];
+  try {
+    const country = (l1.match(/^P[<A-Z]([A-Z]{3})/) || [])[1] || 'CAN';
+    const names = l1.slice(5).split('<<');
+    const lastName  = (names[0] || '').replace(/</g, ' ').trim();
+    const firstName = (names[1] || '').replace(/</g, ' ').trim();
+    const docNumber = l2.slice(0, 9).replace(/</g, '');
+    const dob    = normalizeDate(l2.slice(13, 19));
+    const expiry = normalizeDate(l2.slice(21, 27));
+    if (lastName && (dob || expiry))
+      return { lastName, firstName, docNumber, dob, expiry, country: 'CA' };
+  } catch (_) {}
+  return null;
+}
+
+// Heuristic field extraction from OCR text for non-passport IDs
+function extractFields(text, idType) {
+  const up = text.toUpperCase();
+  const res = { firstName:'', lastName:'', dob:'', expiry:'', idNumber:'' };
+
+  if (idType === 'passport_ca') {
+    const mrz = parseMRZ(text);
+    if (mrz) { Object.assign(res, mrz); }
+  }
+
+  // Dates: assume earliest plausible = DOB, latest = expiry
+  const dates = findDates(text)
+    .filter(d => { const y = +d.slice(0,4); return y >= 1900 && y <= 2100; })
+    .sort();
+  if (dates.length && !res.dob)    res.dob = dates[0];
+  if (dates.length > 1 && !res.expiry) res.expiry = dates[dates.length - 1];
+
+  // Document number — labelled patterns first
+  if (!res.idNumber) {
+    const lab = up.match(/(?:NO|NUMBER|NUMÉRO|N°|DL|#)[:.\s]{0,3}([A-Z0-9\-]{5,20})/);
+    if (lab) res.idNumber = lab[1];
+    else {
+      const cand = up.match(/\b([A-Z0-9]{5,9}[-\s]?\d{4,10})\b/) || up.match(/\b(\d{8,15})\b/);
+      if (cand) res.idNumber = cand[1].replace(/\s/g,'');
+    }
+  }
+
+  // Name — look for "LN, FN" or labelled lines (best-effort; user confirms)
+  if (!res.lastName) {
+    const ln = text.match(/(?:Surname|Last Name|Nom)[:\s]+([A-Z][A-Za-z'\-]+)/i);
+    const fn = text.match(/(?:Given Name|First Name|Pr[eé]nom)[:\s]+([A-Z][A-Za-z'\-]+)/i);
+    if (ln) res.lastName  = ln[1];
+    if (fn) res.firstName = fn[1];
+  }
+  return res;
+}
+
+// Decide whether the upload is genuinely the selected ID type.
+// Requires: a detectable face + a date + enough type keywords.
+function validateIsId(text, idType, hasFace) {
+  const up = text.toUpperCase().replace(/[^A-Z0-9<\s]/g, ' ');
+  const kws = ID_TYPE_KEYWORDS[idType] || [];
+  let hits = 0;
+  for (const k of kws) if (up.includes(k)) hits++;
+  const hasDate = findDates(text).length > 0;
+  const looksGov = /CANADA|ONTARIO|GOVERNMENT|GOUVERNEMENT|CANADIAN/.test(up);
+  const enoughText = up.replace(/\s/g,'').length >= 25;
+
+  // Must look like a photo ID at all
+  if (!hasFace)  return { ok:false, reason:'no_face' };
+  if (!enoughText && !hasDate) return { ok:false, reason:'not_a_document' };
+  // Must match the chosen type (or at least be a Canadian gov doc with a date)
+  if (hits < 1 && !(looksGov && hasDate)) return { ok:false, reason:'type_mismatch' };
+  if (!hasDate)  return { ok:false, reason:'no_date' };
+  return { ok:true, confidence: hits >= 2 && looksGov ? 'high' : 'low' };
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  PHASE 1 — UPLOAD ID → OCR EXTRACT → REVIEW
 // ─────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   const startBtn   = document.getElementById('start-btn');
   const backBtn2   = document.getElementById('back-home-btn-2');
-
   if (startBtn) startBtn.addEventListener('click', () => showPhase(1));
   if (backBtn2) backBtn2.addEventListener('click', () => showPhase(0));
 
-  // Form fields
   const idTypeSelect = document.getElementById('id-type-select');
+  const idPhotoInput = document.getElementById('id-photo-input');
+  const idUploadLbl  = document.getElementById('id-upload-label');
+  const idPhotoThumb = document.getElementById('id-photo-thumb');
+  const uploadStatus = document.getElementById('upload-status-text');
+  const processBtn   = document.getElementById('upload-process-btn');
+  const consentCheck = document.getElementById('consent-check');
+  const consentRow   = document.getElementById('consent-row');
+  const reviewBlock  = document.getElementById('review-block');
+  const reviewBanner = document.getElementById('review-banner');
+  const ocrProgress  = document.getElementById('ocr-progress');
   const firstName    = document.getElementById('id-first-name');
   const lastName     = document.getElementById('id-last-name');
   const dobInput     = document.getElementById('id-dob');
   const idNumber     = document.getElementById('id-number');
   const expiryInput  = document.getElementById('id-expiry');
   const countrySel   = document.getElementById('id-country');
-  const idPhotoInput = document.getElementById('id-photo-input');
-  const idPhotoThumb = document.getElementById('id-photo-thumb');
-  const uploadStatus = document.getElementById('upload-status-text');
-  const processBtn   = document.getElementById('upload-process-btn');
-  const consentCheck = document.getElementById('consent-check');
 
-  function formComplete() {
-    return !!(
-      idTypeSelect.value &&
-      firstName.value.trim() &&
-      lastName.value.trim() &&
-      dobInput.value &&
-      idNumber.value.trim() &&
-      expiryInput.value &&
-      countrySel.value &&
-      state.idPhotoImage
-    );
-  }
+  let scanned = false;
 
-  function refreshProcessBtn() {
-    const complete  = formComplete();
-    const consented = consentCheck ? consentCheck.checked : false;
-    if (processBtn) processBtn.disabled = !(complete && consented);
-
+  function setStatus(msg, tone) {
     if (!uploadStatus) return;
-    if (!idTypeSelect.value)       uploadStatus.textContent = 'Select your ID type to begin.';
-    else if (!firstName.value.trim() || !lastName.value.trim())
-                                   uploadStatus.textContent = 'Enter your name as shown on your ID.';
-    else if (!dobInput.value)      uploadStatus.textContent = 'Enter your date of birth.';
-    else if (!idNumber.value.trim()) uploadStatus.textContent = 'Enter your ID / document number.';
-    else if (!expiryInput.value)   uploadStatus.textContent = 'Enter your ID expiry date.';
-    else if (!countrySel.value)    uploadStatus.textContent = 'Select your country of issue.';
-    else if (!state.idPhotoImage)  uploadStatus.textContent = 'Add a photo of your ID.';
-    else if (!consented)           uploadStatus.textContent = 'Tick the consent box to continue.';
-    else                           uploadStatus.textContent = '✓ Ready. Tap "Continue to verification".';
+    uploadStatus.textContent = msg;
+    uploadStatus.parentElement.dataset.tone = tone || '';
   }
 
-  [idTypeSelect, firstName, lastName, dobInput, idNumber, expiryInput, countrySel]
-    .forEach(el => {
-      el?.addEventListener('input', refreshProcessBtn);
-      el?.addEventListener('change', refreshProcessBtn);
-    });
-  consentCheck?.addEventListener('change', refreshProcessBtn);
+  // Enable the upload control only once an ID type is chosen
+  idTypeSelect?.addEventListener('change', () => {
+    const on = !!idTypeSelect.value;
+    idPhotoInput.disabled = !on;
+    idUploadLbl?.classList.toggle('disabled', !on);
+    if (on && !scanned) setStatus('Upload a clear photo of your ' + (ID_TYPE_LABELS[idTypeSelect.value]||'ID') + '.');
+    else if (!on) setStatus('Select your ID type to begin.');
+  });
 
-  // ID photo upload (for matching only)
+  function reviewComplete() {
+    return !!(firstName.value.trim() && lastName.value.trim() &&
+              dobInput.value && idNumber.value.trim() && expiryInput.value);
+  }
+  function refreshBtn() {
+    const ok = scanned && reviewComplete() && consentCheck && consentCheck.checked;
+    if (processBtn) processBtn.disabled = !ok;
+  }
+  [firstName,lastName,dobInput,idNumber,expiryInput].forEach(el=>{
+    el?.addEventListener('input', refreshBtn);
+    el?.addEventListener('change', refreshBtn);
+  });
+  consentCheck?.addEventListener('change', refreshBtn);
+
+  function ocrStep(n, cls) {
+    const s = document.getElementById('ocr-step-' + n);
+    if (s) { s.classList.remove('active','done'); s.classList.add(cls); }
+  }
+
+  // Main: upload → validate → OCR → extract → review
   idPhotoInput?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const dataUrl = await resizeImageFile(file, 1600, 0.85);
+
+    // Reject anything that is not an image up-front
+    if (!file.type || !file.type.startsWith('image/')) {
+      setStatus('That is not an image. Please upload a photo of your ID only.', 'bad');
+      idPhotoInput.value = ''; return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      setStatus('That image is too large (max 25 MB).', 'bad'); idPhotoInput.value=''; return;
+    }
+
+    const idType = idTypeSelect.value;
+    if (!idType) { setStatus('Select your ID type first.', 'bad'); idPhotoInput.value=''; return; }
+
+    scanned = false;
+    if (reviewBlock) reviewBlock.hidden = true;
+    if (consentRow)  consentRow.hidden  = true;
+    refreshBtn();
+
+    const dataUrl = await resizeImageFile(file, 1700, 0.9);
     state.idPhotoImage = dataUrl;
     if (idPhotoThumb) {
       idPhotoThumb.classList.add('has-image');
       idPhotoThumb.style.backgroundImage = `url('${dataUrl}')`;
       idPhotoThumb.parentElement?.classList.add('has-image');
     }
-    refreshProcessBtn();
+
+    if (ocrProgress) ocrProgress.hidden = false;
+    ['1','2','3','4'].forEach(n=>{const s=document.getElementById('ocr-step-'+n);s&&s.classList.remove('active','done');});
+
+    try {
+      // Step 1 — basic image sanity
+      ocrStep(1,'active');
+      setStatus('Scanning your ID…');
+      await new Promise(r=>setTimeout(r,300));
+
+      // Step 2 — must contain a face (it is a photo ID)
+      ocrStep(1,'done'); ocrStep(2,'active');
+      await loadFaceApiModels();
+      let hasFace = false;
+      try {
+        if (faceApiReady) {
+          const img = await dataUrlToImage(dataUrl);
+          const det = await faceapi.detectSingleFace(img,
+            new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.35 }));
+          hasFace = !!det;
+        } else { hasFace = true; } // models failed to load → don't hard-block
+      } catch (_) { hasFace = true; }
+
+      // Step 3 — OCR the text
+      ocrStep(2,'done'); ocrStep(3,'active');
+      setStatus('Reading the text on your ID…');
+      let text = '';
+      try {
+        if (window.Tesseract) {
+          const { data } = await Tesseract.recognize(dataUrl, 'eng');
+          text = (data && data.text) || '';
+        }
+      } catch (err) { console.warn('[ocr] failed:', err); }
+
+      // Validate it really is the selected ID
+      const verdict = validateIsId(text, idType, hasFace);
+      if (!verdict.ok) {
+        if (ocrProgress) ocrProgress.hidden = true;
+        const msgs = {
+          no_face:        'We could not find a face photo on this image. Please upload your actual photo ID — nothing else.',
+          not_a_document: 'This does not look like an ID document. Please upload a clear photo of your ' + ID_TYPE_LABELS[idType] + '.',
+          type_mismatch:  'This does not look like a ' + ID_TYPE_LABELS[idType] + '. Check the ID type you selected, or upload the correct document.',
+          no_date:        'We could not read the dates on this ID. Please upload a sharper, well-lit photo.'
+        };
+        setStatus(msgs[verdict.reason] || 'This does not appear to be a valid ID. Please try again.', 'bad');
+        state.idPhotoImage = '';
+        if (idPhotoThumb){idPhotoThumb.classList.remove('has-image');idPhotoThumb.style.backgroundImage='';}
+        idPhotoInput.value = '';
+        return;
+      }
+
+      // Step 4 — extract fields
+      const f = extractFields(text, idType);
+      if (firstName)  firstName.value  = f.firstName || '';
+      if (lastName)   lastName.value   = f.lastName  || '';
+      if (dobInput)   dobInput.value   = f.dob       || '';
+      if (idNumber)   idNumber.value   = f.idNumber  || '';
+      if (expiryInput)expiryInput.value= f.expiry    || '';
+      if (countrySel) countrySel.value = 'CA';
+
+      ocrStep(3,'done'); ocrStep(4,'active'); ocrStep(4,'done');
+      await new Promise(r=>setTimeout(r,250));
+      if (ocrProgress) ocrProgress.hidden = true;
+
+      scanned = true;
+      state.ocrConfidence = verdict.confidence;
+      if (reviewBlock) reviewBlock.hidden = false;
+      if (consentRow)  consentRow.hidden  = false;
+
+      const missing = !f.dob || !f.expiry || !f.lastName;
+      if (reviewBanner) {
+        reviewBanner.textContent = missing
+          ? 'We could not read everything clearly. Please fill in or correct the highlighted details from your ID.'
+          : 'We read these details from your ID. Please check them and correct anything that is wrong.';
+        reviewBanner.classList.toggle('warn', missing);
+      }
+      setStatus(missing
+        ? 'Almost there — complete the details below to continue.'
+        : '✓ ID read successfully. Review the details below.');
+      refreshBtn();
+    } catch (err) {
+      console.error('[scan] error:', err);
+      if (ocrProgress) ocrProgress.hidden = true;
+      setStatus('Something went wrong reading your ID. Please try another photo.', 'bad');
+    }
   });
 
-  // Continue → validate, store details, go to liveness
+  // Continue → final validation → liveness
   processBtn?.addEventListener('click', () => {
-    if (!formComplete()) return;
+    if (!scanned || !reviewComplete()) return;
 
-    // Client-side age check
     const age = calculateAge(dobInput.value);
     if (age !== null && age < 18) {
-      uploadStatus.textContent = `You are ${age} — under the minimum age for verification.`;
+      setStatus(`This ID shows an age of ${age} — under the minimum age for verification.`, 'bad');
       return;
     }
-    // Client-side expiry check
     const exp = new Date(`${expiryInput.value}T00:00:00`);
     if (!Number.isNaN(exp.getTime()) && exp.getTime() < Date.now()) {
-      uploadStatus.textContent = 'This ID is expired. Please use a valid ID.';
+      setStatus('This ID is expired. Please use a valid, unexpired ID.', 'bad');
       return;
     }
 
@@ -363,14 +603,13 @@ document.addEventListener('DOMContentLoaded', () => {
       dob:       dobInput.value,
       idNumber:  idNumber.value.trim(),
       expiry:    expiryInput.value,
-      country:   countrySel.value
+      country:   'CA'
     };
-
-    uploadStatus.textContent = '✓ Details saved. Continuing to liveness check…';
-    setTimeout(() => showPhase(2), 500);
+    setStatus('✓ Details confirmed. Continuing to the liveness check…');
+    setTimeout(() => showPhase(2), 450);
   });
 
-  // Pre-load face-api models in the background
+  // Pre-load face models in the background
   loadFaceApiModels();
 });
 
@@ -920,6 +1159,7 @@ document.getElementById('restart-btn').addEventListener('click', () => {
   state.livenessChallenges = null;
   state.token              = '';
   state.truliooReference   = null;
+  state.ocrConfidence      = null;
   state.serverPublicRecord = null;
   state.idDetails = {
     idType: '', firstName: '', lastName: '', dob: '',
@@ -928,10 +1168,18 @@ document.getElementById('restart-btn').addEventListener('click', () => {
 
   // Reset form
   ['id-type-select', 'id-first-name', 'id-last-name', 'id-dob',
-   'id-number', 'id-expiry', 'id-country', 'id-photo-input'].forEach(id => {
+   'id-number', 'id-expiry', 'id-photo-input'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+  const idInput = document.getElementById('id-photo-input');
+  if (idInput) idInput.disabled = true;
+  const rb = document.getElementById('review-block');
+  if (rb) rb.hidden = true;
+  const cr = document.getElementById('consent-row');
+  if (cr) cr.hidden = true;
+  const op = document.getElementById('ocr-progress');
+  if (op) op.hidden = true;
   const thumb = document.getElementById('id-photo-thumb');
   if (thumb) {
     thumb.classList.remove('has-image');
@@ -943,7 +1191,7 @@ document.getElementById('restart-btn').addEventListener('click', () => {
   const ub = document.getElementById('upload-process-btn');
   if (ub) ub.disabled = true;
   const us = document.getElementById('upload-status-text');
-  if (us) us.textContent = 'Fill in your details and add your ID photo to continue.';
+  if (us) us.textContent = 'Select your ID type to begin.';
 
   document.getElementById('saving-section').style.display = 'block';
   document.getElementById('pass-section').style.display   = 'none';

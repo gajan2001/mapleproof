@@ -1,4 +1,39 @@
-# Mapleproof — v11 (premium black & gold theme + launch gate)
+# Mapleproof — v11.1 (exact logo + OCR auto-extract + Canadian IDs)
+
+Updates on top of v11:
+
+### Exact logo
+The logo is now the **real Mapleproof maple-M**, extracted directly from your reference image (not hand-drawn) and recoloured to a clean gold gradient. Used as `logo-mark.png` everywhere — nav, hero, footer, favicons, in-app, retailer, admin. A `logo-full.png` (mark + wordmark) is also included.
+
+### Upload-and-read ID flow (no manual typing)
+The user no longer types their details. Instead:
+
+1. **Pick the ID type** (the 7 accepted Canadian documents — see below)
+2. **Upload one photo of the ID** — the upload button stays locked until a type is chosen
+3. The browser runs **Tesseract.js OCR** + **face detection** and:
+   - **Rejects non-IDs immediately** — if the image has no face photo, no readable text, or doesn't match the chosen document type, it's refused with a clear message and nothing is kept
+   - **Rejects non-images** up front (wrong file type / too large)
+   - **Extracts** name, date of birth, document number, and expiry (passport uses MRZ parsing; others use labelled-field + date heuristics)
+4. **Review step** — the extracted details are shown pre-filled. If anything couldn't be read confidently, the user is asked to **complete/correct it manually** (the validation fallback you asked for). They must confirm before continuing.
+5. Liveness selfie → **face match against the ID photo** → simulated Trulioo → pass
+
+The ID photo is still **used only in the browser** (read + face match) and **never uploaded or stored** — only the verified selfie + match score persist.
+
+### The 7 accepted ID types
+Ontario Driver's Licence (with photograph) · Canadian Passport · Canadian Citizenship Card (with photo) · Canadian Armed Forces Identification Card · Secure Certificate of Indian Status (Government of Canada) · Permanent Resident Card (Government of Canada) · Ontario Photo Card (Photo Card Act).
+
+`server.js` `VALID_ID_TYPES` and the in-app labels were updated to exactly this list; the old worldwide list and the country dropdown were removed (country is fixed to Canada).
+
+### Files changed in v11.1
+`app.html` (Canadian ID dropdown, upload+OCR UI, review block, Tesseract script), `app.js` (OCR pipeline: `validateIsId`, `extractFields`, `parseMRZ`, reject logic, review flow), `server.js` (7 Canadian `VALID_ID_TYPES`), `styles.css` (review/upload states), all logo/favicon assets (exact logo).
+
+> Note on OCR: Tesseract runs fully in the browser. Real-world ID photos vary, so the **review/confirm step is always shown** — extracted values are a starting point the user verifies. This is intentional and matches your "if anything not clear, ask the user to validate manually" requirement. For production-grade extraction you'd later route the image through Trulioo's document API (the simulated hook is already there).
+
+---
+
+---
+
+
 
 **v11 is a visual + structural release on top of v10.** All the v10 logic (worldwide IDs, simulated Trulioo, selfie-only pass) is unchanged and still works. What changed:
 

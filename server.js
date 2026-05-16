@@ -618,7 +618,8 @@ app.post('/api/register', async (req, res) => {
     if (faceImageData.length > 8_000_000)
       return res.status(413).json({ ok: false, error: 'Face image too large.' });
 
-    const VALID_ID_TYPES = ['passport', 'drivers_license', 'national_id', 'state_id', 'residence_permit'];
+    const VALID_ID_TYPES = ['ontario_dl', 'passport_ca', 'citizenship_card',
+      'caf_id', 'indian_status', 'pr_card', 'ontario_photo_card'];
     if (!VALID_ID_TYPES.includes(idType))
       return res.status(400).json({ ok: false, error: 'Invalid ID type.' });
 
