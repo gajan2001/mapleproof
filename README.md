@@ -1,3 +1,60 @@
+# Mapleproof — v11 (premium black & gold theme + launch gate)
+
+**v11 is a visual + structural release on top of v10.** All the v10 logic (worldwide IDs, simulated Trulioo, selfie-only pass) is unchanged and still works. What changed:
+
+## New in v11
+
+### 1. Premium black & gold theme
+The entire site was redesigned to a luxury dark aesthetic — pure black backgrounds, gold-gradient accents, the nightclub marble backdrop, and the "SHOW LESS. PROVE MORE." tagline. Applied across the landing page, the verification app, the retailer scanner, the admin panel, and all legal pages.
+
+### 2. New maple-M logo
+A brand-new gold maple-leaf-with-M logo (`logo-mark.svg` — crisp vector, used inline on the main pages; plus PNG fallbacks/favicons). **All previous logos were deleted** (`logo-shield*`, `logo-horizontal*`, old `logo-leaf-mark`, old favicons) and replaced.
+
+### 3. "Under development" launch gate
+- **`/` now shows a premium "Launching Soon" page** (`coming-soon.html`) — NOT the marketing site.
+- It has an **"Enter Trial Version →"** button that takes visitors to **`/home`** (the working trial).
+- Routing:
+  - `/` → `coming-soon.html` (the gate — first thing everyone sees)
+  - `/home` → `index.html` (the real marketing landing — premium black/gold)
+  - `/app` → the working v10 verification flow (now black/gold themed)
+  - everything else (`/retailer`, `/admin`, `/privacy`, …) unchanged
+
+### 4. New background assets
+Three optimized images from your reference pack: `bg-nightclub.jpg` (global background), `bg-products.jpg` (hero), `bg-card-phone-opt.jpg` (privacy section).
+
+## Files changed/added in v11
+
+```
+coming-soon.html   ← NEW: the under-development gate (premium black/gold)
+index.html         ← REBUILT: premium black/gold marketing landing
+logo-mark.svg      ← NEW: vector maple-M logo
+logo-mark.png      ← NEW: raster fallback
+favicon.png/-32    ← REPLACED with new gold mark
+bg-*.jpg           ← NEW: background images from your refs
+styles.css         ← black/gold theme override appended (app/retailer/admin)
+legal-styles.css   ← black/gold theme override appended (legal pages)
+server.js          ← routing: "/" → gate, "/home" → marketing
+app.html           ← brand link → /home (logic & v10 elements unchanged)
+```
+
+**Deleted:** `logo-shield.png`, `logo-shield-transparent.png` (old), `logo-horizontal.png`, `logo-horizontal-transparent.png`, old `logo-leaf-mark.png`, old favicons — all replaced with the new gold mark.
+
+> Note: `logo-leaf-mark.png` and `logo-shield-transparent.png` filenames still exist (regenerated with the NEW gold logo) so the existing `<img>` tags in app/retailer/admin keep working without markup changes.
+
+## Deploy (same as before)
+
+1. Upload all v11 files to GitHub (replace everything)
+2. Render auto-redeploys. The self-healing DB migration + Node pin (`>=18 <24`) from v10 are still in place
+3. If you want a clean DB, set `RESET_DB=1`, deploy, then remove it
+
+After deploy:
+- `mapleproof.onrender.com/` → the new "Launching Soon" gate
+- Click **Enter Trial Version** → premium landing → **Get My Pass** → working flow
+
+---
+
+---
+
 # Mapleproof — v10 (worldwide IDs + Trulioo verification)
 
 This release makes Mapleproof work with **identity documents from any country** — passports, national ID cards, residence permits, driver's licenses — and adds an identity-verification step routed through **Trulioo** (currently **simulated** — see the warning below).

@@ -1,0 +1,28 @@
+<svg viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Mapleproof">
+  <defs>
+    <linearGradient id="mpGold" x1="20%" y1="0%" x2="60%" y2="100%">
+      <stop offset="0%"   stop-color="#fbe6a2"/>
+      <stop offset="30%"  stop-color="#ecc862"/>
+      <stop offset="58%"  stop-color="#d6ab3c"/>
+      <stop offset="100%" stop-color="#9c6f1c"/>
+    </linearGradient>
+    <linearGradient id="mpSheen" x1="0%" y1="0%" x2="100%" y2="20%">
+      <stop offset="0%"   stop-color="#fff" stop-opacity="0"/>
+      <stop offset="46%"  stop-color="#fff8df" stop-opacity="0.5"/>
+      <stop offset="54%"  stop-color="#fff8df" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#mpGold)">
+    <path d="M120 6 L134 64 L106 64 Z"/>
+    <path d="M128 58 L196 44 L168 92 L150 80 Z"/>
+    <path d="M112 58 L44 44 L72 92 L90 80 Z"/>
+    <path d="M156 84 L214 100 L168 122 Z"/>
+    <path d="M84 84 L26 100 L72 122 Z"/>
+    <path d="M70 70 L96 70 L120 138 L144 70 L170 70 L170 210 L146 210 L146 128 L128 178 L112 178 L94 128 L94 210 L70 210 Z"/>
+    <rect x="113" y="206" width="14" height="26" rx="3"/>
+  </g>
+  <g fill="url(#mpSheen)" opacity="0.55">
+    <path d="M70 70 L96 70 L120 138 L144 70 L170 70 L170 210 L146 210 L146 128 L128 178 L112 178 L94 128 L94 210 L70 210 Z"/>
+  </g>
+</svg>

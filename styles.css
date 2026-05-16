@@ -1707,3 +1707,144 @@ img, svg, video, canvas { max-width: 100%; display: block; }
 .result-twin-photos {
   justify-content: center;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   v11 — PREMIUM BLACK & GOLD THEME OVERRIDE
+   Remaps the entire design system to the luxury dark aesthetic.
+   ═══════════════════════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
+
+:root{
+  --bg:#060504; --surface:#0e0c08; --surface-2:#13100a;
+  --border:rgba(212,168,56,.18); --border-2:rgba(212,168,56,.30);
+  --brand:#e8c25a; --brand-hover:#f3d27a; --brand-soft:rgba(212,168,56,.10);
+  --accent-red:#e0654f; --accent-orange:#e8a24a;
+  --text:#f6f1e6; --text-2:#cdc3aa; --text-3:#b6ab92; --text-4:#8c8369;
+  --ok:#7bd88f; --ok-bg:rgba(123,216,143,.10);
+  --warn:#e8b04a; --warn-bg:rgba(232,176,74,.10);
+  --bad:#e0654f; --bad-bg:rgba(224,101,79,.12);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.5);
+  --shadow-md:0 6px 20px rgba(0,0,0,.55);
+  --shadow-lg:0 18px 44px rgba(0,0,0,.65);
+  --font-display:'Outfit',system-ui,sans-serif;
+  --font-body:'Outfit',system-ui,sans-serif;
+  --gold-grad:linear-gradient(135deg,#fbe6a2 0%,#e8c25a 34%,#d4a838 60%,#9c6f1c 100%);
+}
+
+body{
+  background:
+    linear-gradient(180deg,rgba(6,5,4,.86),rgba(6,5,4,.96)),
+    url('/bg-nightclub.jpg') center top / cover fixed no-repeat,
+    var(--bg) !important;
+  color:var(--text);
+}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.035;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E")}
+.app-shell,.wrap,main,header,footer{position:relative;z-index:1}
+
+/* Surfaces that were hardcoded white → dark glass */
+.phase,.card,.panel,.scan-status,.upload-card,.pass-card,.result-modal,
+.result-card,.modal,.sheet,.box,.tile,.stat,.audit-row,.user-card,
+.retailer-card,[class*="card"],[class*="panel"]{
+  background:rgba(20,17,11,.72) !important;
+  border-color:var(--border) !important;
+  color:var(--text);
+  backdrop-filter:blur(8px);
+}
+
+/* Brand wordmark → gold */
+.brand,.brand span,.brand-small span,.logo-text,h1,h2{color:var(--text)}
+.brand span,.brand-small span{
+  background:var(--gold-grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+/* Inputs & selects → dark with gold focus */
+input,select,textarea{
+  background:rgba(0,0,0,.4) !important;
+  border:1.5px solid var(--border) !important;
+  color:var(--text) !important;
+}
+input::placeholder{color:var(--text-4)}
+input:focus,select:focus,textarea:focus{
+  border-color:var(--brand) !important;
+  outline:none;box-shadow:0 0 0 3px rgba(212,168,56,.14)}
+select option{background:#13100a;color:var(--text)}
+label{color:var(--text-2) !important}
+
+/* Buttons → gold gradient primary, gold-outline ghost */
+.btn-primary,button.btn-primary,.start-btn,#start-btn,
+button[type="submit"]:not(.btn-ghost){
+  background:var(--gold-grad) !important;
+  color:#1a1305 !important;border:0 !important;font-weight:700;
+  box-shadow:0 10px 28px -10px rgba(212,168,56,.5)}
+.btn-primary:hover{transform:translateY(-1px);
+  box-shadow:0 16px 38px -10px rgba(212,168,56,.65)}
+.btn-ghost,a.btn-ghost,button.btn-ghost{
+  background:transparent !important;color:var(--brand) !important;
+  border:1px solid var(--border) !important}
+.btn-ghost:hover{border-color:var(--brand-hover) !important;
+  background:rgba(212,168,56,.06) !important}
+
+/* Nav / header links */
+nav a,header a,.nav a{color:var(--text-3)}
+nav a:hover,header a:hover{color:var(--brand)}
+
+/* Pass card → premium black/gold collectible */
+.pass-card{
+  background:linear-gradient(165deg,#13100a 0%,#0b0906 100%) !important;
+  border:1px solid var(--border-2) !important;
+  box-shadow:0 24px 60px -16px rgba(0,0,0,.8),
+    inset 0 1px 0 rgba(251,230,162,.12) !important;
+}
+.pass-accent{background:var(--gold-grad) !important}
+.pf-bigage,.pass-match-big.match-strong{color:var(--brand) !important}
+.pf-bigage{background:var(--gold-grad);-webkit-background-clip:text;
+  background-clip:text;color:transparent !important}
+.check-circle{border-color:var(--brand) !important;color:var(--brand) !important}
+.pass-trulioo-badge{background:rgba(212,168,56,.14) !important;color:var(--brand) !important}
+.pass-photo-img,.pass-photo-img.large{border-color:var(--border-2) !important;
+  background:#0b0906 !important}
+.pass-photo-label{color:var(--brand) !important}
+.perforation{border-color:var(--border) !important}
+.barcode-svg rect[fill="#ffffff"],.barcode-svg rect[fill="#fff"]{fill:#0b0906}
+.pass-barcode-area{background:#f6f1e6;border-radius:10px;padding:10px}
+
+/* Status pills keep semantic colors but on dark */
+.pf-value.ok,.ok{color:var(--ok) !important}
+.pf-value.warn,.warn{color:var(--warn) !important}
+.pf-value.bad,.bad{color:var(--bad) !important}
+
+/* Trulioo progress on dark */
+.trulioo-step.active{color:var(--text) !important}
+.trulioo-step.done{color:var(--ok) !important}
+.trulioo-step .trulioo-dot{background:rgba(212,168,56,.25)}
+.trulioo-step.active .trulioo-dot{background:var(--brand)}
+.trulioo-step.done .trulioo-dot{background:var(--ok)}
+
+/* Consent / hints */
+.consent-text,.upload-hint,.pf-subline,small,.muted{color:var(--text-3) !important}
+.consent-text a,a{color:var(--brand)}
+
+/* Spinner gold */
+.spinner,.spinner.big{border-color:rgba(212,168,56,.2) !important;
+  border-top-color:var(--brand) !important}
+
+/* Dividers */
+hr,.divider,.perforation{border-color:var(--border) !important}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:#0b0906}
+::-webkit-scrollbar-thumb{background:rgba(212,168,56,.3);border-radius:6px}
+::-webkit-scrollbar-thumb:hover{background:rgba(212,168,56,.5)}
+
+/* Phase headings */
+.phase-head h2{color:var(--text)}
+.phase-head p{color:var(--text-3)}
+
+/* ID type / form sections */
+.id-type-selector label,.form-field label{color:var(--brand) !important;
+  font-weight:600;letter-spacing:.02em}
+.upload-card{border:1.5px dashed var(--border-2) !important}
+.upload-card:hover{border-color:var(--brand) !important;background:rgba(212,168,56,.04) !important}
+.upload-thumb svg{stroke:var(--brand)}
+.upload-label{color:var(--text-2) !important}

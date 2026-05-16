@@ -201,3 +201,44 @@ main.legal hr { border: none; border-top: 1px solid var(--line); margin: 40px 0;
   .legal-nav-links { gap: 12px; }
   .legal-nav-links a:not(.legal-cta) { display: none; }
 }
+
+/* ═══ v11 — BLACK & GOLD THEME OVERRIDE ═══ */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
+:root{
+  --bg:#060504; --bg-soft:#0e0c08; --ink:#f6f1e6; --ink-soft:#cdc3aa;
+  --muted:#b6ab92; --line:rgba(212,168,56,.18);
+  --green:#e8c25a; --green-bright:#f3d27a; --green-tint:rgba(212,168,56,.10);
+  --red:#e0654f; --amber:#e8b04a;
+  --shadow:0 18px 44px rgba(0,0,0,.6);
+}
+body{
+  font-family:'Outfit',system-ui,sans-serif !important;
+  background:
+    linear-gradient(180deg,rgba(6,5,4,.9),rgba(6,5,4,.97)),
+    url('/bg-nightclub.jpg') center top / cover fixed no-repeat,
+    #060504 !important;
+  color:var(--ink);
+}
+a{color:var(--green) !important}
+.legal-nav{background:rgba(6,5,4,.8) !important;
+  border-bottom:1px solid var(--line) !important;backdrop-filter:blur(12px)}
+.legal-nav .brand,.legal-nav strong,.brand span{
+  background:linear-gradient(135deg,#fbe6a2,#d4a838 60%,#9c6f1c);
+  -webkit-background-clip:text;background-clip:text;color:transparent !important}
+.legal-nav img{filter:drop-shadow(0 4px 12px rgba(212,168,56,.3))}
+main,.legal-main,article,section{color:var(--ink)}
+h1,h2,h3,h4{color:var(--ink) !important}
+h1{background:linear-gradient(135deg,#fbe6a2,#d4a838 60%,#9c6f1c);
+  -webkit-background-clip:text;background-clip:text;color:transparent !important}
+.card,.box,.panel,.tldr,details,.faq-item,[class*="card"]{
+  background:rgba(20,17,11,.7) !important;border-color:var(--line) !important;
+  color:var(--ink);backdrop-filter:blur(8px)}
+.muted,small,.fineprint{color:var(--muted) !important}
+hr,.divider{border-color:var(--line) !important}
+.btn,button,.cta{background:linear-gradient(135deg,#fbe6a2,#e8c25a 34%,#d4a838 60%,#9c6f1c) !important;
+  color:#1a1305 !important;border:0 !important;font-weight:700}
+.btn-ghost{background:transparent !important;color:var(--green) !important;
+  border:1px solid var(--line) !important}
+footer{background:#060504 !important;border-top:1px solid var(--line) !important;color:var(--muted)}
+::-webkit-scrollbar{width:10px}::-webkit-scrollbar-track{background:#0b0906}
+::-webkit-scrollbar-thumb{background:rgba(212,168,56,.3);border-radius:6px}

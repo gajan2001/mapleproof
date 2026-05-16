@@ -485,7 +485,9 @@ app.use(express.static(__dirname, {
   index: false, dotfiles: 'deny',
   setHeaders: (res, fp) => { if (fp.endsWith('.html')) res.setHeader('Cache-Control', 'no-store'); }
 }));
-app.get('/',          (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+// "/" shows the under-development gate. The working trial lives at "/home".
+app.get('/',          (_req, res) => res.sendFile(path.join(__dirname, 'coming-soon.html')));
+app.get('/home',      (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/app',       (_req, res) => res.sendFile(path.join(__dirname, 'app.html')));
 app.get('/retailer',  (_req, res) => res.sendFile(path.join(__dirname, 'retailer.html')));
 app.get('/admin',     (_req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
