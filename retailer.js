@@ -37,7 +37,7 @@
   const banner          = document.getElementById('result-banner');
   const bannerText      = document.getElementById('banner-text');
   const livePhotoEl     = document.getElementById('res-live-photo');
-  const idPhotoEl       = document.getElementById('res-id-photo');
+  const idPhotoEl       = null;  // v10: ID photos are no longer stored or shown
   const statusEl        = document.getElementById('res-status');
   const matchEl         = document.getElementById('res-match');
   const scansEl         = document.getElementById('res-scans');
@@ -262,7 +262,7 @@
           tone: 'denied',
           token: null,
           bannerText: 'NOT FOUND',
-          livePhoto: '', idPhoto: '',
+          livePhoto: '',
           age: '—', status: 'Not registered', match: '—', matchStatus: 'unknown', scans: '—',
           flags: ['UNKNOWN_PASS']
         });
@@ -311,7 +311,6 @@
         token,
         bannerText,
         livePhoto: r.faceImage,
-        idPhoto:   r.idFaceImage || r.faceImage,
         age: r.ageBadge,
         status: r.verified ? 'Registered & verified' : 'Registered · check ID',
         match: matchText,
@@ -330,7 +329,7 @@
       tone: 'denied',
       token: null,
       bannerText: 'LOOKUP FAILED',
-      livePhoto: '', idPhoto: '',
+      livePhoto: '',
       age: '—', status: msg, match: '—', matchStatus: 'unknown', scans: '—',
       flags: []
     });
@@ -351,14 +350,10 @@
     card.classList.remove('tone-approved', 'tone-warning', 'tone-denied');
     card.classList.add(`tone-${r.tone}`);
 
-    // Twin photos
+    // Verified selfie (single photo — v10 no longer stores ID photos)
     if (livePhotoEl) {
       livePhotoEl.src = r.livePhoto || '';
       livePhotoEl.style.visibility = r.livePhoto ? 'visible' : 'hidden';
-    }
-    if (idPhotoEl) {
-      idPhotoEl.src = r.idPhoto || '';
-      idPhotoEl.style.visibility = r.idPhoto ? 'visible' : 'hidden';
     }
 
     statusEl.textContent = r.status;
@@ -452,14 +447,14 @@
       case 'FRAUD_HOLD':        return 'FRAUD HOLD — refuse sale and verify physical ID';
       case 'UNDER_LEGAL_AGE':   return 'Customer is under the legal age tier';
       case 'CLOSE_TO_LIMIT':    return 'Age is close to legal minimum — check ID carefully';
-      case 'ID_EXPIRED':        return 'Government ID is EXPIRED — refuse sale';
-      case 'ID_EXPIRING_SOON':  return 'Government ID expires within 30 days';
+      case 'ID_EXPIRED':        return 'Identity document is EXPIRED — refuse sale';
+      case 'ID_EXPIRING_SOON':  return 'Identity document expires within 30 days';
       case 'JUST_REGISTERED':   return 'Customer registered less than 5 minutes ago';
       case 'UNKNOWN_PASS':      return 'Barcode is not in the system';
-      case 'PHOTO_MATCH_FAIL':  return 'Selfie does NOT match ID photo — verify visually';
+      case 'PHOTO_MATCH_FAIL':  return 'Selfie does NOT match the ID photo used at registration — verify visually';
       case 'PHOTO_MATCH_WEAK':  return 'Selfie / ID photo match is weak — verify visually';
       case 'NO_LIVENESS_CHECK': return 'No liveness check performed at registration';
-      case 'OCR_MISMATCH':      return 'ID front text doesn\'t match back barcode — possibly tampered';
+      case 'NO_TRULIOO_VERIFICATION': return 'Identity was not verified through Trulioo — treat with caution';
       case 'GEO_ANOMALY':       return 'Pass registered in a different country — possible stolen account';
       default:                  return flag;
     }

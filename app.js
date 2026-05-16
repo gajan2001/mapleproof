@@ -1,20 +1,19 @@
 // ─────────────────────────────────────────────────────────────────
-//  Mapleproof — app.js  (customer kiosk)
-//  Flow: page load → live PDF417 scan of ID → selfie → encrypted save
-//        → Code 128 barcode pass rendered + downloadable
+//  Mapleproof — app.js  (customer kiosk, v10 — worldwide IDs)
+//  Flow: home → ID details (manual, any country) + ID photo upload
+//        → liveness check → Trulioo verification (mocked) → pass
+//
+//  KEY v10 CHANGES:
+//   - No PDF417 barcode scanning. Manual entry supports passports etc.
+//   - ID photo is used ONLY for face matching, then discarded. Never
+//     sent to the server, never stored.
+//   - Trulioo identity-verification step (currently SIMULATED — always
+//     succeeds — until a real Trulioo contract is in place).
+//   - Pass card shows only the verified selfie + face-match %.
 // ─────────────────────────────────────────────────────────────────
 
-import {
-  BrowserMultiFormatReader,
-  BarcodeFormat,
-  DecodeHintType,
-  NotFoundException
-} from 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/+esm';
-
 // ─────────────────────────────────────────────────────────────────
-//  EMBEDDED CODE 128 BARCODE GENERATOR
-//  Self-contained — no external CDN dependencies.
-//  Generates SVG <rect> elements inside the target <svg>.
+//  EMBEDDED CODE 128 BARCODE GENERATOR (self-contained, no CDN)
 // ─────────────────────────────────────────────────────────────────
 const CODE128_PATTERNS = [
   "11011001100","11001101100","11001100110","10010011000","10010001100",
@@ -43,15 +42,12 @@ const CODE128_PATTERNS = [
 
 function renderCode128(svgEl, text, opts = {}) {
   const o = Object.assign({
-    barWidth: 3.4,        // wider bars → reliable scan from phone screens (was 2.4)
-    height: 96,           // taller bars
-    margin: 18,           // wider quiet zone — REQUIRED for ZXing detection
+    barWidth: 3.4, height: 96, margin: 18,
     showText: true, fontSize: 14, textMargin: 6,
     background: '#ffffff', lineColor: '#000000',
     fontFamily: 'JetBrains Mono, monospace'
   }, opts);
 
-  // Encode using Code Set B (printable ASCII 32–127)
   const START_B = 104, STOP = 106;
   const codes = [START_B];
   for (const ch of text) {
@@ -59,21 +55,17 @@ function renderCode128(svgEl, text, opts = {}) {
     if (cc < 32 || cc > 127) throw new Error('Code 128 B: char out of range');
     codes.push(cc - 32);
   }
-  // Checksum: START + sum(code_i * position_i), where position starts at 1
   let sum = START_B;
   for (let i = 1; i < codes.length; i++) sum += codes[i] * i;
   codes.push(sum % 103);
   codes.push(STOP);
 
-  // Build module pattern
   let pattern = '';
   for (const c of codes) pattern += CODE128_PATTERNS[c];
 
-  // Compute size
   const totalW = pattern.length * o.barWidth + o.margin * 2;
   const totalH = o.height + (o.showText ? o.fontSize + o.textMargin : 0) + o.margin;
 
-  // Reset SVG
   while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
   svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   svgEl.setAttribute('width',  totalW);
@@ -81,15 +73,12 @@ function renderCode128(svgEl, text, opts = {}) {
   svgEl.setAttribute('viewBox', `0 0 ${totalW} ${totalH}`);
 
   const SVG_NS = 'http://www.w3.org/2000/svg';
-
-  // Background
   const bg = document.createElementNS(SVG_NS, 'rect');
   bg.setAttribute('width', totalW);
   bg.setAttribute('height', totalH);
   bg.setAttribute('fill', o.background);
   svgEl.appendChild(bg);
 
-  // Bars
   let x = o.margin;
   for (let i = 0; i < pattern.length; i++) {
     if (pattern[i] === '1') {
@@ -104,7 +93,6 @@ function renderCode128(svgEl, text, opts = {}) {
     x += o.barWidth;
   }
 
-  // Text below
   if (o.showText) {
     const txt = document.createElementNS(SVG_NS, 'text');
     txt.setAttribute('x', totalW / 2);
@@ -120,44 +108,41 @@ function renderCode128(svgEl, text, opts = {}) {
   }
 }
 
+// ── ID TYPE LABELS ────────────────────────────────────────────────
+const ID_TYPE_LABELS = {
+  passport:         'Passport',
+  drivers_license:  "Driver's License",
+  national_id:      'National ID',
+  state_id:         'State/Provincial ID',
+  residence_permit: 'Residence Permit'
+};
+
 // ── STATE ──────────────────────────────────────────────────────────
 const state = {
-  faceImageData:  '',
-  idFrontImage:   '',
-  idBackImage:    '',
-  idCroppedFace:  '',              // cropped face from ID front (for pass card)
+  faceImageData:  '',           // verified live selfie (from liveness)
+  idPhotoImage:   '',           // uploaded ID photo — used for matching, NEVER sent to server
   faceMatchScore: null,
   liveDescriptor: null,
   livenessChallenges: null,
   token:          '',
-  parsed: { idNumber: '', dob: '', expiry: '', name: '', jurisdiction: '' },
+  // ID details collected from the manual form
+  idDetails: {
+    idType: '', firstName: '', lastName: '', dob: '',
+    idNumber: '', expiry: '', country: ''
+  },
+  truliooReference: null,
   serverPublicRecord: null
 };
 
-// ── ZXing PDF417 reader for Ontario licence barcodes ──────────────
-const hints = new Map();
-hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.PDF_417]);
-hints.set(DecodeHintType.TRY_HARDER, true);
-const codeReader = new BrowserMultiFormatReader(hints);
-
 // ── STREAMS ────────────────────────────────────────────────────────
-let barcodeStream = null;
-let selfieStream  = null;
+let selfieStream = null;
 
 // ── DOM ────────────────────────────────────────────────────────────
-const barcodeVideo    = document.getElementById('barcode-video');
-const barcodeProc     = document.getElementById('barcode-proc');
-const barcodeCamLabel = document.getElementById('barcode-cam-label');
-const barcodeStatus   = document.getElementById('barcode-status');
-const barcodeSpinner  = document.getElementById('barcode-spinner');
-const barcodeStatusTx = document.getElementById('barcode-status-text');
-const barcodeRetryRow = document.getElementById('barcode-retry-row');
-
 const selfieVideo  = document.getElementById('selfie-video');
 const selfieCanvas = document.getElementById('selfie-canvas');
 
 // ── PHASE NAVIGATION ──────────────────────────────────────────────
-// Phase indices (legacy numeric API): 0=home, 1=scan, 2=selfie, 3=pass
+// 0=home, 1=ID details, 2=liveness, 3=pass
 const PHASE_IDS = ['phase-home', 'phase-scan', 'phase-selfie', 'phase-pass'];
 function showPhase(n) {
   document.querySelectorAll('.phase').forEach(el => {
@@ -172,141 +157,9 @@ function showPhase(n) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// Wire up the home page CTA + back button + mode toggle + ID upload handlers
-document.addEventListener('DOMContentLoaded', () => {
-  const startBtn = document.getElementById('start-btn');
-  const backBtn  = document.getElementById('back-home-btn');
-  const backBtn2 = document.getElementById('back-home-btn-2');
+function stopStream(stream) { if (stream) stream.getTracks().forEach(t => t.stop()); }
 
-  if (startBtn) {
-    startBtn.addEventListener('click', () => {
-      showPhase(1);
-      // Upload mode is the default — no camera until user opts in
-      // (faster + works without HTTPS-camera permissions issues)
-    });
-  }
-  const goHome = () => {
-    scanActive = false;
-    stopStream(barcodeStream);
-    showPhase(0);
-  };
-  if (backBtn)  backBtn.addEventListener('click', goHome);
-  if (backBtn2) backBtn2.addEventListener('click', goHome);
-
-  // ── MODE TOGGLE: upload (default) ↔ live camera ──
-  const modeUploadBtn = document.getElementById('mode-upload-btn');
-  const modeCameraBtn = document.getElementById('mode-camera-btn');
-  const uploadMode    = document.getElementById('upload-mode');
-  const cameraMode    = document.getElementById('camera-mode');
-
-  function setScanMode(mode) {
-    if (mode === 'camera') {
-      modeCameraBtn?.classList.add('active');
-      modeUploadBtn?.classList.remove('active');
-      cameraMode?.classList.add('active');
-      uploadMode?.classList.remove('active');
-      startBarcodeCamera();
-    } else {
-      modeUploadBtn?.classList.add('active');
-      modeCameraBtn?.classList.remove('active');
-      uploadMode?.classList.add('active');
-      cameraMode?.classList.remove('active');
-      // Stop any running camera
-      scanActive = false;
-      stopStream(barcodeStream);
-    }
-  }
-  modeUploadBtn?.addEventListener('click', () => setScanMode('upload'));
-  modeCameraBtn?.addEventListener('click', () => setScanMode('camera'));
-
-  // ── ID UPLOAD: front + back file inputs ──
-  const idFrontInput  = document.getElementById('id-front-input');
-  const idBackInput   = document.getElementById('id-back-input');
-  const idFrontThumb  = document.getElementById('id-front-thumb');
-  const idBackThumb   = document.getElementById('id-back-thumb');
-  const uploadStatus  = document.getElementById('upload-status-text');
-  const processBtn    = document.getElementById('upload-process-btn');
-  const consentCheck  = document.getElementById('consent-check');
-
-  function refreshProcessBtn() {
-    const haveBoth = !!state.idFrontImage && !!state.idBackImage;
-    const consented = consentCheck ? consentCheck.checked : false;
-    const ready = haveBoth && consented;
-    if (processBtn) processBtn.disabled = !ready;
-    if (uploadStatus) {
-      uploadStatus.textContent = !haveBoth
-        ? (state.idFrontImage ? 'Now add the back of your ID.'
-        :  state.idBackImage  ? 'Now add the front of your ID.'
-        :  'Add both sides of your ID to continue.')
-        : (!consented ? 'Tick the consent box to continue.' : 'Ready to process. Tap "Process ID".');
-    }
-  }
-
-  consentCheck?.addEventListener('change', refreshProcessBtn);
-
-  async function handleIdImageFile(file, side) {
-    if (!file) return;
-    // Resize/compress so we don't blow past the 24mb server limit
-    const dataUrl = await resizeImageFile(file, 1600, 0.85);
-    if (side === 'front') {
-      state.idFrontImage = dataUrl;
-      if (idFrontThumb) {
-        idFrontThumb.classList.add('has-image');
-        idFrontThumb.style.backgroundImage = `url('${dataUrl}')`;
-        idFrontThumb.parentElement.classList.add('has-image');
-      }
-    } else {
-      state.idBackImage = dataUrl;
-      if (idBackThumb) {
-        idBackThumb.classList.add('has-image');
-        idBackThumb.style.backgroundImage = `url('${dataUrl}')`;
-        idBackThumb.parentElement.classList.add('has-image');
-      }
-    }
-    refreshProcessBtn();
-  }
-
-  idFrontInput?.addEventListener('change', e => handleIdImageFile(e.target.files[0], 'front'));
-  idBackInput?.addEventListener('change', e => handleIdImageFile(e.target.files[0], 'back'));
-
-  processBtn?.addEventListener('click', async () => {
-    if (!state.idFrontImage || !state.idBackImage) return;
-    processBtn.disabled = true;
-    if (uploadStatus) uploadStatus.textContent = 'Reading barcode from back of ID…';
-
-    try {
-      const parsed = await decodeBarcodeFromDataUrl(state.idBackImage);
-      // Validate age + expiry as we do for camera mode
-      const age = computeAge(parsed.dob);
-      if (age !== null && age < 18) {
-        if (uploadStatus) uploadStatus.textContent = `Customer is ${age} — under the minimum age tier.`;
-        processBtn.disabled = false;
-        return;
-      }
-      if (parsed.expiry) {
-        const exp = new Date(`${parsed.expiry}T00:00:00`);
-        if (!Number.isNaN(exp.getTime()) && exp.getTime() < Date.now()) {
-          if (uploadStatus) uploadStatus.textContent = 'This ID is expired. Please use a valid ID.';
-          processBtn.disabled = false;
-          return;
-        }
-      }
-      state.parsed = parsed;
-      if (uploadStatus) uploadStatus.textContent = '✓ ID barcode read. Continuing…';
-      setTimeout(() => { showPhase(2); /* liveness intro shown automatically */ }, 600);
-    } catch (err) {
-      console.error('[upload] barcode decode failed:', err);
-      if (uploadStatus) uploadStatus.textContent =
-        'Could not read the barcode on the back of your ID. Try a clearer, well-lit, focused photo — or use the live camera mode.';
-      processBtn.disabled = false;
-    }
-  });
-
-  // Pre-load face-api models in the background — parallel to the user's flow
-  loadFaceApiModels();
-});
-
-// ── Resize a File to a max dimension and return a JPEG data URL ──
+// ── Resize a File to a max dimension, return JPEG data URL ──
 function resizeImageFile(file, maxDim = 1600, quality = 0.85) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -332,25 +185,20 @@ function resizeImageFile(file, maxDim = 1600, quality = 0.85) {
   });
 }
 
-// ── Decode a PDF417 barcode from a data URL using ZXing ──
-async function decodeBarcodeFromDataUrl(dataUrl) {
-  const img = new Image();
-  await new Promise((res, rej) => {
-    img.onload = res; img.onerror = rej; img.src = dataUrl;
-  });
-  const baseCanvas = document.createElement('canvas');
-  baseCanvas.width = img.width; baseCanvas.height = img.height;
-  baseCanvas.getContext('2d').drawImage(img, 0, 0);
-  const result = await tryDecodeCanvasVariants(baseCanvas);
-  return parseBarcodeText(result.text);
+// ── Age helper ─────────────────────────────────────────────────────
+function calculateAge(dob) {
+  if (!dob) return null;
+  const d = new Date(`${dob}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
+  return age;
 }
-
-// ── Helper used by upload-mode age check (alias of calculateAge for readability) ──
-function computeAge(dob) { return calculateAge(dob); }
 
 // ─────────────────────────────────────────────────────────────────
 //  FACE MATCHING — browser-side via face-api.js (FREE)
-//  Loads from CDN. Models are ~6MB total, cached after first load.
 // ─────────────────────────────────────────────────────────────────
 const FACE_MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
 let faceApiReady = false;
@@ -386,37 +234,28 @@ async function dataUrlToImage(dataUrl) {
   return img;
 }
 
-/**
- * Compare two face images and return a similarity score in [0, 1].
- * Returns null if either face can't be detected.
- */
-async function compareFaces(selfieDataUrl, idFrontDataUrl) {
-  if (!selfieDataUrl || !idFrontDataUrl) return null;
+/** Compare two face images → similarity in [0,1], or null if no face found. */
+async function compareFaces(selfieDataUrl, idPhotoDataUrl) {
+  if (!selfieDataUrl || !idPhotoDataUrl) return null;
   await loadFaceApiModels();
   if (!faceApiReady) return null;
-
   try {
     const [selfieImg, idImg] = await Promise.all([
       dataUrlToImage(selfieDataUrl),
-      dataUrlToImage(idFrontDataUrl)
+      dataUrlToImage(idPhotoDataUrl)
     ]);
     const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.4 });
-
     const [selfieDetect, idDetect] = await Promise.all([
       faceapi.detectSingleFace(selfieImg, opts).withFaceLandmarks().withFaceDescriptor(),
       faceapi.detectSingleFace(idImg, opts).withFaceLandmarks().withFaceDescriptor()
     ]);
-
     if (!selfieDetect || !idDetect) {
-      console.warn('[face-match] could not detect a face in', !selfieDetect ? 'selfie' : 'ID front');
+      console.warn('[face-match] no face in', !selfieDetect ? 'selfie' : 'ID photo');
       return null;
     }
-
-    // face-api returns a euclidean distance: 0 = identical, ~0.6+ = different.
-    // We convert to a similarity in [0, 1] where higher is better.
     const distance = faceapi.euclideanDistance(selfieDetect.descriptor, idDetect.descriptor);
     const similarity = Math.max(0, Math.min(1, 1 - distance));
-    console.log(`[face-match] distance=${distance.toFixed(3)}  similarity=${similarity.toFixed(3)}`);
+    console.log(`[face-match] distance=${distance.toFixed(3)} similarity=${similarity.toFixed(3)}`);
     return similarity;
   } catch (err) {
     console.error('[face-match] error:', err);
@@ -424,277 +263,120 @@ async function compareFaces(selfieDataUrl, idFrontDataUrl) {
   }
 }
 
-// ── IMAGE PROCESSING HELPERS ──────────────────────────────────────
-function stopStream(stream) { if (stream) stream.getTracks().forEach(t => t.stop()); }
-
-function cloneCanvas(src) {
-  const c = document.createElement('canvas');
-  c.width = src.width; c.height = src.height;
-  c.getContext('2d').drawImage(src, 0, 0);
-  return c;
-}
-function cropCanvas(src, sx, sy, sw, sh) {
-  const c = document.createElement('canvas');
-  c.width  = Math.max(1, Math.round(sw));
-  c.height = Math.max(1, Math.round(sh));
-  c.getContext('2d').drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
-  return c;
-}
-function scaleCanvas(src, factor) {
-  const c = document.createElement('canvas');
-  c.width  = Math.max(1, Math.round(src.width  * factor));
-  c.height = Math.max(1, Math.round(src.height * factor));
-  const ctx = c.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(src, 0, 0, c.width, c.height);
-  return c;
-}
-function grayscaleCanvas(src) {
-  const c = cloneCanvas(src), ctx = c.getContext('2d');
-  const id = ctx.getImageData(0, 0, c.width, c.height), d = id.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const g = Math.round(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114);
-    d[i] = d[i+1] = d[i+2] = g;
-  }
-  ctx.putImageData(id, 0, 0);
-  return c;
-}
-function thresholdCanvas(src, t = 145) {
-  const c = grayscaleCanvas(src), ctx = c.getContext('2d');
-  const id = ctx.getImageData(0, 0, c.width, c.height), d = id.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const v = d[i] >= t ? 255 : 0;
-    d[i] = d[i+1] = d[i+2] = v;
-  }
-  ctx.putImageData(id, 0, 0);
-  return c;
-}
-function contrastCanvas(src, contrast = 80) {
-  const c = cloneCanvas(src), ctx = c.getContext('2d');
-  const id = ctx.getImageData(0, 0, c.width, c.height), d = id.data;
-  const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
-  const clamp  = v => Math.max(0, Math.min(255, Math.round(v)));
-  for (let i = 0; i < d.length; i += 4) {
-    d[i]   = clamp(factor * (d[i]   - 128) + 128);
-    d[i+1] = clamp(factor * (d[i+1] - 128) + 128);
-    d[i+2] = clamp(factor * (d[i+2] - 128) + 128);
-  }
-  ctx.putImageData(id, 0, 0);
-  return c;
-}
-async function canvasToImage(canvas, quality = 0.95) {
-  const img = new Image();
-  img.src = canvas.toDataURL('image/jpeg', quality);
-  await img.decode();
-  return img;
-}
-
-// Try variants — reduced from 14 to 5 most effective for mobile speed.
-// Each variant takes ~50-150ms on mobile, so fewer = faster scan loop.
-async function tryDecodeCanvasVariants(base) {
-  const bottom45 = cropCanvas(base, 0, base.height*0.50, base.width, base.height*0.45);
-  const bottom45Scaled = scaleCanvas(bottom45, 1.8);
-
-  const variants = [
-    { label: 'b45',                canvas: bottom45 },
-    { label: 'b45-thresh',         canvas: thresholdCanvas(bottom45, 140) },
-    { label: 'b45-scaled',         canvas: bottom45Scaled },
-    { label: 'b45-scaled-thresh',  canvas: thresholdCanvas(bottom45Scaled, 145) },
-    { label: 'full-thresh',        canvas: thresholdCanvas(base, 145) },
-  ];
-
-  for (const v of variants) {
-    try {
-      const img    = await canvasToImage(v.canvas);
-      const result = await codeReader.decodeFromImageElement(img);
-      return { text: result.getText(), method: v.label };
-    } catch (err) {
-      if (!(err instanceof NotFoundException)) console.warn('[zxing]', v.label, err.message || err);
-    }
-  }
-  throw new Error('No PDF417 found');
-}
-
-// ── AAMVA PARSE (Ontario / NA driver licence) ─────────────────────
-function cleanField(raw = '') { return raw.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim(); }
-function parseAAMVADate(value) {
-  if (!value) return '';
-  const c = value.replace(/\D/g, '');
-  if (c.length !== 8) return '';
-  const first4 = Number(c.slice(0, 4));
-  if (first4 > 1900 && first4 < 2100) return `${c.slice(0,4)}-${c.slice(4,6)}-${c.slice(6,8)}`;
-  return `${c.slice(4,8)}-${c.slice(0,2)}-${c.slice(2,4)}`;
-}
-function findCode(raw, code) {
-  for (const line of raw.split(/\r?\n/)) {
-    if (line.startsWith(code)) return cleanField(line.slice(code.length));
-  }
-  const m = raw.match(new RegExp(`${code}([^\\n\\r]+)`));
-  return m ? cleanField(m[1]) : '';
-}
-function parseBarcodeText(raw) {
-  const last = findCode(raw, 'DCS'), first = findCode(raw, 'DAC'), mid = findCode(raw, 'DAD');
-  const name = [first, mid, last].filter(Boolean).join(' ') || findCode(raw, 'DAA') || '';
-  return {
-    idNumber:     findCode(raw, 'DAQ'),
-    dob:          parseAAMVADate(findCode(raw, 'DBB')),
-    expiry:       parseAAMVADate(findCode(raw, 'DBA')),
-    name,
-    jurisdiction: [findCode(raw, 'DAJ'), findCode(raw, 'DCG')].filter(Boolean).join(' / ')
-  };
-}
-function calculateAge(dob) {
-  if (!dob) return null;
-  const d = new Date(`${dob}T00:00:00`), t = new Date();
-  let age = t.getFullYear() - d.getFullYear();
-  const m = t.getMonth() - d.getMonth();
-  if (m < 0 || (m === 0 && t.getDate() < d.getDate())) age--;
-  return age;
-}
-
-function setBarcodeStatus(text, cls = '') {
-  barcodeStatusTx.textContent = text;
-  barcodeStatus.className = `status-card ${cls}`;
-}
-
 // ─────────────────────────────────────────────────────────────────
-//  PHASE 1 — robust live scan loop using requestAnimationFrame
+//  PHASE 1 — ID DETAILS FORM (worldwide, manual entry)
 // ─────────────────────────────────────────────────────────────────
-let scanActive       = false;   // outer rAF loop on/off
-let decodeInFlight   = false;   // prevents async pile-up
-let lastFrameTs      = 0;
-const FRAME_INTERVAL = 600;     // ms between decode attempts
+document.addEventListener('DOMContentLoaded', () => {
+  const startBtn   = document.getElementById('start-btn');
+  const backBtn2   = document.getElementById('back-home-btn-2');
 
-const frameCanvas = document.createElement('canvas');
-const frameCtx    = frameCanvas.getContext('2d');
+  if (startBtn) startBtn.addEventListener('click', () => showPhase(1));
+  if (backBtn2) backBtn2.addEventListener('click', () => showPhase(0));
 
-async function startBarcodeCamera() {
-  setBarcodeStatus('Requesting camera…');
-  barcodeSpinner.classList.remove('hidden');
+  // Form fields
+  const idTypeSelect = document.getElementById('id-type-select');
+  const firstName    = document.getElementById('id-first-name');
+  const lastName     = document.getElementById('id-last-name');
+  const dobInput     = document.getElementById('id-dob');
+  const idNumber     = document.getElementById('id-number');
+  const expiryInput  = document.getElementById('id-expiry');
+  const countrySel   = document.getElementById('id-country');
+  const idPhotoInput = document.getElementById('id-photo-input');
+  const idPhotoThumb = document.getElementById('id-photo-thumb');
+  const uploadStatus = document.getElementById('upload-status-text');
+  const processBtn   = document.getElementById('upload-process-btn');
+  const consentCheck = document.getElementById('consent-check');
 
-  try {
-    barcodeStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: 'environment' },
-        width:  { ideal: 1280 },
-        height: { ideal: 720 }
-      }
+  function formComplete() {
+    return !!(
+      idTypeSelect.value &&
+      firstName.value.trim() &&
+      lastName.value.trim() &&
+      dobInput.value &&
+      idNumber.value.trim() &&
+      expiryInput.value &&
+      countrySel.value &&
+      state.idPhotoImage
+    );
+  }
+
+  function refreshProcessBtn() {
+    const complete  = formComplete();
+    const consented = consentCheck ? consentCheck.checked : false;
+    if (processBtn) processBtn.disabled = !(complete && consented);
+
+    if (!uploadStatus) return;
+    if (!idTypeSelect.value)       uploadStatus.textContent = 'Select your ID type to begin.';
+    else if (!firstName.value.trim() || !lastName.value.trim())
+                                   uploadStatus.textContent = 'Enter your name as shown on your ID.';
+    else if (!dobInput.value)      uploadStatus.textContent = 'Enter your date of birth.';
+    else if (!idNumber.value.trim()) uploadStatus.textContent = 'Enter your ID / document number.';
+    else if (!expiryInput.value)   uploadStatus.textContent = 'Enter your ID expiry date.';
+    else if (!countrySel.value)    uploadStatus.textContent = 'Select your country of issue.';
+    else if (!state.idPhotoImage)  uploadStatus.textContent = 'Add a photo of your ID.';
+    else if (!consented)           uploadStatus.textContent = 'Tick the consent box to continue.';
+    else                           uploadStatus.textContent = '✓ Ready. Tap "Continue to verification".';
+  }
+
+  [idTypeSelect, firstName, lastName, dobInput, idNumber, expiryInput, countrySel]
+    .forEach(el => {
+      el?.addEventListener('input', refreshProcessBtn);
+      el?.addEventListener('change', refreshProcessBtn);
     });
-    barcodeVideo.srcObject = barcodeStream;
-    await barcodeVideo.play();
+  consentCheck?.addEventListener('change', refreshProcessBtn);
 
-    setBarcodeStatus('Camera ready. Hold the barcode side of the ID inside the frame.');
-    barcodeCamLabel.textContent = 'Scanning…';
-    barcodeCamLabel.className   = 'cam-status active';
-    barcodeRetryRow.style.display = 'none';
+  // ID photo upload (for matching only)
+  idPhotoInput?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const dataUrl = await resizeImageFile(file, 1600, 0.85);
+    state.idPhotoImage = dataUrl;
+    if (idPhotoThumb) {
+      idPhotoThumb.classList.add('has-image');
+      idPhotoThumb.style.backgroundImage = `url('${dataUrl}')`;
+      idPhotoThumb.parentElement?.classList.add('has-image');
+    }
+    refreshProcessBtn();
+  });
 
-    decodeInFlight = false;
-    scanActive     = true;
-    lastFrameTs    = 0;
-    requestAnimationFrame(scanTick);
+  // Continue → validate, store details, go to liveness
+  processBtn?.addEventListener('click', () => {
+    if (!formComplete()) return;
 
-  } catch (err) {
-    console.error(err);
-    setBarcodeStatus('Camera access denied. Please allow camera access and try again.', 'error');
-    barcodeSpinner.classList.add('hidden');
-    barcodeCamLabel.textContent = 'Camera unavailable';
-    barcodeCamLabel.className   = 'cam-status';
-    barcodeRetryRow.style.display = 'flex';
-  }
-}
-
-function scanTick(now) {
-  if (!scanActive) return;
-  if (now - lastFrameTs >= FRAME_INTERVAL && !decodeInFlight) {
-    lastFrameTs = now;
-    scanFrame();   // fire-and-forget; sets/clears decodeInFlight internally
-  }
-  requestAnimationFrame(scanTick);
-}
-
-async function scanFrame() {
-  if (decodeInFlight) return;
-  if (!barcodeVideo.videoWidth || !barcodeVideo.videoHeight) return;
-  decodeInFlight = true;
-
-  try {
-    frameCanvas.width  = barcodeVideo.videoWidth;
-    frameCanvas.height = barcodeVideo.videoHeight;
-    frameCtx.drawImage(barcodeVideo, 0, 0);
-
-    const result = await tryDecodeCanvasVariants(cloneCanvas(frameCanvas));
-
-    // SUCCESS — stop loop immediately so we don't kick off a second decode
-    scanActive = false;
-    stopStream(barcodeStream);
-    barcodeStream = null;
-    barcodeProc.classList.remove('show');
-
-    const parsed = parseBarcodeText(result.text);
-    const age    = calculateAge(parsed.dob);
-
-    // 18+ tier minimum (server enforces 19+ for Ontario alcohol/cannabis verified status)
+    // Client-side age check
+    const age = calculateAge(dobInput.value);
     if (age !== null && age < 18) {
-      barcodeCamLabel.textContent = 'Under 18';
-      barcodeCamLabel.className   = 'cam-status';
-      setBarcodeStatus(`Customer is ${age}. Cannot register — under the minimum age tier.`, 'error');
-      barcodeSpinner.classList.add('hidden');
-      barcodeRetryRow.style.display = 'flex';
-      decodeInFlight = false;
+      uploadStatus.textContent = `You are ${age} — under the minimum age for verification.`;
+      return;
+    }
+    // Client-side expiry check
+    const exp = new Date(`${expiryInput.value}T00:00:00`);
+    if (!Number.isNaN(exp.getTime()) && exp.getTime() < Date.now()) {
+      uploadStatus.textContent = 'This ID is expired. Please use a valid ID.';
       return;
     }
 
-    if (parsed.expiry) {
-      const exp   = new Date(`${parsed.expiry}T00:00:00`);
-      const today = new Date();
-      if (exp < new Date(today.getFullYear(), today.getMonth(), today.getDate())) {
-        barcodeCamLabel.textContent = 'ID expired';
-        barcodeCamLabel.className   = 'cam-status';
-        setBarcodeStatus('This ID is expired. Please use a valid government-issued ID.', 'error');
-        barcodeSpinner.classList.add('hidden');
-        barcodeRetryRow.style.display = 'flex';
-        decodeInFlight = false;
-        return;
-      }
-    }
+    state.idDetails = {
+      idType:    idTypeSelect.value,
+      firstName: firstName.value.trim(),
+      lastName:  lastName.value.trim(),
+      dob:       dobInput.value,
+      idNumber:  idNumber.value.trim(),
+      expiry:    expiryInput.value,
+      country:   countrySel.value
+    };
 
-    state.parsed = parsed;
-    barcodeCamLabel.textContent = '✓ Barcode read';
-    barcodeCamLabel.className   = 'cam-status found';
-    setBarcodeStatus(`Decoded successfully. Continuing…`, 'ok');
-    barcodeSpinner.classList.add('hidden');
+    uploadStatus.textContent = '✓ Details saved. Continuing to liveness check…';
+    setTimeout(() => showPhase(2), 500);
+  });
 
-    decodeInFlight = false;
-    setTimeout(() => {
-      showPhase(2);
-      /* liveness intro shown automatically */
-    }, 700);
-
-  } catch {
-    // No barcode this frame — quietly keep scanning
-    decodeInFlight = false;
-  }
-}
-
-// Retry button
-document.getElementById('retry-barcode-btn').addEventListener('click', () => {
-  barcodeRetryRow.style.display = 'none';
-  startBarcodeCamera();
+  // Pre-load face-api models in the background
+  loadFaceApiModels();
 });
 
 // ─────────────────────────────────────────────────────────────────
 //  PHASE 2 — LIVENESS CHECK (active anti-spoofing)
 // ─────────────────────────────────────────────────────────────────
-//  Replaces the old "take a selfie" flow. The user must perform 3
-//  random challenges (blink, smile, turn head, etc.) in front of the
-//  camera. Each challenge is verified in real-time using face-api.js
-//  facial landmarks. We capture the best frame for the pass photo,
-//  AND get a 128-D face descriptor that we can match against the ID.
-//
-//  All free, all browser-side. No API. Hard to spoof with a printed
-//  photo because the user must perform unpredictable physical actions.
-// ─────────────────────────────────────────────────────────────────
-
 async function startLivenessCamera() {
   try {
     selfieStream = await navigator.mediaDevices.getUserMedia({
@@ -727,7 +409,6 @@ async function runLivenessFlow() {
     return;
   }
 
-  // Show loading while models download (first time only — they're cached after)
   showLivenessUI('loading');
   const ready = await window.MapleproofLiveness.ensureModels();
   if (!ready) {
@@ -738,21 +419,15 @@ async function runLivenessFlow() {
     return;
   }
 
-  // Open camera
   showLivenessUI('active');
   const cameraOk = await startLivenessCamera();
-  if (!cameraOk) {
-    showLivenessUI('intro');
-    return;
-  }
+  if (!cameraOk) { showLivenessUI('intro'); return; }
 
-  // Wait for video to actually be playing
   await new Promise(r => {
     if (selfieVideo.readyState >= 2) return r();
     selfieVideo.addEventListener('loadeddata', r, { once: true });
   });
 
-  // Run the challenge sequence
   let result;
   try {
     result = await window.MapleproofLiveness.runLivenessChallenge({
@@ -764,7 +439,7 @@ async function runLivenessFlow() {
       hintEl:     document.getElementById('liveness-hint'),
       manualBtn:  document.getElementById('liveness-manual-btn'),
       manualBtnDelay:      6000,
-      challengeCount:      4,        // full 360 head sequence (left, right, up, down)
+      challengeCount:      4,
       timeoutPerChallenge: 18000
     });
   } catch (err) {
@@ -784,50 +459,40 @@ async function runLivenessFlow() {
     return;
   }
 
-  // Success! Save the captured face image + descriptor
-  state.faceImageData    = result.faceImageData;
-  state.liveDescriptor   = result.descriptor;     // 128-D face vector
+  // Success — save the captured face image + descriptor
+  state.faceImageData      = result.faceImageData;
+  state.liveDescriptor     = result.descriptor;
   state.livenessChallenges = result.challenges;
   console.log('[liveness] success — captured face + descriptor');
 
-  // Stop camera and continue to pass generation
   stopStream(selfieStream); selfieStream = null;
   showPhase(3);
   saveAndGeneratePass();
 }
 
-// ── Wire up phase-2 buttons ────────────────────────────────────────
-document.getElementById('start-liveness-btn')?.addEventListener('click', () => {
-  runLivenessFlow();
-});
-
+// Wire up phase-2 buttons
+document.getElementById('start-liveness-btn')?.addEventListener('click', () => runLivenessFlow());
 document.getElementById('cancel-liveness-btn')?.addEventListener('click', () => {
   stopStream(selfieStream); selfieStream = null;
   showLivenessUI('intro');
 });
-
-document.getElementById('retry-liveness-btn')?.addEventListener('click', () => {
-  showLivenessUI('intro');
-});
+document.getElementById('retry-liveness-btn')?.addEventListener('click', () => showLivenessUI('intro'));
 
 ['back-to-id-btn', 'back-to-id-btn-2'].forEach(id => {
   document.getElementById(id)?.addEventListener('click', () => {
     stopStream(selfieStream); selfieStream = null;
-    state.parsed = { idNumber: '', dob: '', expiry: '', name: '', jurisdiction: '' };
     state.liveDescriptor = null;
     showLivenessUI('intro');
     showPhase(1);
   });
 });
 
-// Reset to intro when phase 2 is shown
-document.getElementById('start-liveness-btn') && (() => {
-  // Listen for phase changes via mutation observer so liveness UI resets to intro
+// Reset to intro when phase 2 is shown fresh
+(() => {
   const phase2 = document.getElementById('phase-selfie');
   if (!phase2) return;
   const obs = new MutationObserver(() => {
     if (phase2.classList.contains('active') && !selfieStream) {
-      // Default back to intro screen (only when no active stream — i.e. fresh entry)
       const fail = document.getElementById('liveness-fail');
       if (!fail || fail.hidden) showLivenessUI('intro');
     }
@@ -836,33 +501,89 @@ document.getElementById('start-liveness-btn') && (() => {
 })();
 
 // ─────────────────────────────────────────────────────────────────
-//  PHASE 3 — POST to server, render Code 128 barcode pass
+//  TRULIOO VERIFICATION (SIMULATED)
+//  ────────────────────────────────────────────────────────────────
+//  This calls our own /api/trulioo-verify endpoint, which currently
+//  FAKES a successful Trulioo identity-verification response. When a
+//  real Trulioo contract is signed, the server endpoint is swapped to
+//  call Trulioo's GlobalGateway API — the browser code stays the same.
 // ─────────────────────────────────────────────────────────────────
-function formatDate(iso) {
-  if (!iso) return '—';
-  const d = new Date(`${iso}T00:00:00`);
-  return d.toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: '2-digit' });
+async function runTruliooVerification() {
+  const progress = document.getElementById('trulioo-progress');
+  const steps = [
+    document.getElementById('trulioo-step-1'),
+    document.getElementById('trulioo-step-2'),
+    document.getElementById('trulioo-step-3'),
+    document.getElementById('trulioo-step-4')
+  ];
+  if (progress) progress.hidden = false;
+  steps.forEach(s => s && s.classList.remove('active', 'done'));
+
+  // Animate the first 3 steps visually while the request runs
+  const animate = (async () => {
+    for (let i = 0; i < 3; i++) {
+      steps[i]?.classList.add('active');
+      await new Promise(r => setTimeout(r, 700));
+      steps[i]?.classList.remove('active');
+      steps[i]?.classList.add('done');
+    }
+  })();
+
+  let result;
+  try {
+    const resp = await fetch('/api/trulioo-verify', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        idType:    state.idDetails.idType,
+        firstName: state.idDetails.firstName,
+        lastName:  state.idDetails.lastName,
+        dob:       state.idDetails.dob,
+        idNumber:  state.idDetails.idNumber,
+        expiry:    state.idDetails.expiry,
+        country:   state.idDetails.country
+      })
+    });
+    result = await resp.json();
+  } catch (err) {
+    console.error('[trulioo] network error:', err);
+    result = { ok: false, error: 'Could not reach the verification service.' };
+  }
+
+  await animate;
+
+  if (!result.ok || !result.verified) {
+    if (progress) progress.hidden = true;
+    throw new Error(result.error || 'Identity verification did not pass. Please check your details.');
+  }
+
+  // Mark final step done
+  steps[3]?.classList.add('active', 'done');
+  state.truliooReference = result.reference || null;
+  await new Promise(r => setTimeout(r, 500));
+  if (progress) progress.hidden = true;
+  return result;
 }
 
+// ─────────────────────────────────────────────────────────────────
+//  PHASE 3 — verify with Trulioo → POST to server → render pass
+// ─────────────────────────────────────────────────────────────────
 async function saveAndGeneratePass() {
   const savingSection = document.getElementById('saving-section');
   const passSection   = document.getElementById('pass-section');
   const saveError     = document.getElementById('save-error');
+  const savingMsg     = savingSection.querySelector('p');
 
   savingSection.style.display = 'block';
   passSection.style.display   = 'none';
   saveError.style.display     = 'none';
 
   try {
-    const savingMsg = savingSection.querySelector('p');
-
-    // ── 1) Crop just the FACE from the live capture (no background) ──
-    // The pass card will display this cropped portrait.
+    // ── 1) Crop just the FACE from the live capture (clean portrait) ──
     let croppedLiveFace = state.faceImageData;
     if (window.MapleproofLiveness && state.faceImageData) {
       try {
         if (savingMsg) savingMsg.textContent = 'Preparing your photo…';
-        // Live photo: square, no circle (clean room background already)
         croppedLiveFace = await window.MapleproofLiveness.cropFaceFromImage(
           state.faceImageData, 360, { circular: false }
         );
@@ -871,39 +592,18 @@ async function saveAndGeneratePass() {
       }
     }
 
-    // ── 2) Crop just the FACE from the ID front (no text/background) ──
-    // We use this for matching AND it's what the server stores so the
-    // pass card never shows ID text.
-    let croppedIdFace = null;
-    if (window.MapleproofLiveness && state.idFrontImage) {
-      try {
-        if (savingMsg) savingMsg.textContent = 'Reading your ID photo…';
-        // ID photo: CIRCULAR mask + tighter crop — IDs have text right next to
-        // the photo, so we apply a circular fade-to-white mask as a safety net
-        // to ensure no DOB / address / signature is ever visible.
-        croppedIdFace = await window.MapleproofLiveness.cropFaceFromImage(
-          state.idFrontImage, 360, { circular: true }
-        );
-      } catch (err) {
-        console.warn('[crop] ID face crop failed:', err);
-      }
-    }
-
-    // ── 3) Compute face match (live ↔ ID front) using the CROPPED faces ──
+    // ── 2) Face match: live selfie ↔ uploaded ID photo ──
+    //     The ID photo is used ONLY here. It is never sent to the server.
     let matchScore = null;
-    if (state.idFrontImage) {
+    if (state.idPhotoImage) {
       try {
-        if (savingMsg) savingMsg.textContent = 'Matching your face to your ID…';
-
+        if (savingMsg) savingMsg.textContent = 'Matching your face to your ID photo…';
         if (state.liveDescriptor && window.MapleproofLiveness) {
-          // Match against the FULL ID front (face-api finds the face natively
-          // and gets the cleanest descriptor). The circularly-cropped version
-          // is only for display.
           matchScore = await window.MapleproofLiveness.compareDescriptorToImage(
-            state.liveDescriptor, state.idFrontImage
+            state.liveDescriptor, state.idPhotoImage
           );
-        } else if (state.faceImageData) {
-          matchScore = await compareFaces(croppedLiveFace, state.idFrontImage);
+        } else {
+          matchScore = await compareFaces(croppedLiveFace, state.idPhotoImage);
         }
       } catch (err) {
         console.warn('[face-match] failed; continuing without match score:', err);
@@ -911,14 +611,18 @@ async function saveAndGeneratePass() {
     }
     state.faceMatchScore = matchScore;
 
-    if (savingMsg) savingMsg.textContent = 'Saving your pass…';
+    // ── 3) TRULIOO IDENTITY VERIFICATION (simulated) ──
+    if (savingMsg) savingMsg.textContent = 'Verifying your identity with Trulioo…';
+    await runTruliooVerification();   // throws if it doesn't pass
 
     // ── 4) Submit to server ──
-    // We DO NOT send full ID images by default (privacy minimization).
-    // Server only stores the face crops; raw images are processed in-browser.
+    //     We send: ID details, the verified selfie, match score, Trulioo
+    //     reference. We do NOT send the ID photo — face matching already
+    //     happened in-browser, and the ID photo is never stored.
+    if (savingMsg) savingMsg.textContent = 'Saving your pass…';
+
     const consentEl = document.getElementById('consent-check');
-    const consentAccepted = consentEl ? consentEl.checked : false;
-    if (!consentAccepted) {
+    if (!consentEl || !consentEl.checked) {
       throw new Error('You must accept the privacy notice and terms to continue.');
     }
 
@@ -926,16 +630,22 @@ async function saveAndGeneratePass() {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        ...state.parsed,
-        faceImageData:  croppedLiveFace,                    // cropped live face for pass display
-        // idFrontImage and idBackImage NOT sent by default — privacy minimization
-        idFaceImage:    croppedIdFace || undefined,         // cropped ID face for pass display
+        idType:        state.idDetails.idType,
+        firstName:     state.idDetails.firstName,
+        lastName:      state.idDetails.lastName,
+        name:          `${state.idDetails.firstName} ${state.idDetails.lastName}`.trim(),
+        dob:           state.idDetails.dob,
+        idNumber:      state.idDetails.idNumber,
+        expiry:        state.idDetails.expiry,
+        country:       state.idDetails.country,
+        faceImageData: croppedLiveFace,         // verified selfie ONLY
         faceMatchScore: matchScore,
         livenessVerified:   !!state.liveDescriptor,
         livenessChallenges: state.livenessChallenges || undefined,
+        truliooVerified:    true,
+        truliooReference:   state.truliooReference || undefined,
         consentAccepted:    true,
-        consentVersion:     '1.0',
-        ocrFrontText:       state.ocrFrontText || undefined  // browser-side OCR (not yet implemented)
+        consentVersion:     '2.0'
       })
     });
 
@@ -946,51 +656,45 @@ async function saveAndGeneratePass() {
     state.serverPublicRecord = data.publicRecord;
     const pub = data.publicRecord;
 
-    // Populate pass card (white card matching Mapleproof brand)
-    document.getElementById('pass-age-badge').textContent  = pub.ageBadge || '19+';
+    // ── Populate pass card ──
+    document.getElementById('pass-age-badge').textContent   = pub.ageBadge || '19+';
     document.getElementById('pass-token-label').textContent = `ID · ${data.token}`;
 
-    // Render Code 128 barcode (the value the retailer scanner reads)
-    // Wider bars + larger quiet zone → reliable scan from a phone screen.
-    const barcodeSvgEl = document.getElementById('barcode-svg');
-    renderCode128(barcodeSvgEl, data.barcode, {
+    renderCode128(document.getElementById('barcode-svg'), data.barcode, {
       barWidth: 3.4, height: 96, margin: 18, showText: true,
       fontSize: 14, textMargin: 6,
       background: '#ffffff', lineColor: '#000000',
       fontFamily: 'JetBrains Mono, monospace'
     });
 
-    // Twin photos on pass card: LIVE + ID
-    state.faceImageData = croppedLiveFace;       // download uses cropped live
-    state.idCroppedFace = croppedIdFace || null; // download will also use this
+    // Single verified selfie on the pass
+    state.faceImageData = croppedLiveFace;
     document.getElementById('pass-face-photo').src = croppedLiveFace;
-    const idPhotoEl = document.getElementById('pass-id-photo');
-    if (idPhotoEl) {
-      if (croppedIdFace) {
-        idPhotoEl.src = croppedIdFace;
-        idPhotoEl.style.display = '';
-      } else {
-        // No ID face crop available — hide the ID slot gracefully
-        idPhotoEl.style.display = 'none';
-      }
-    }
-    document.getElementById('pass-status-val').textContent   = `REGISTERED · ${pub.ageBadge}`;
+    document.getElementById('pass-status-val').textContent  = `REGISTERED · ${pub.ageBadge}`;
+    document.getElementById('pass-idtype-val').textContent  =
+      ID_TYPE_LABELS[state.idDetails.idType] || 'ID';
 
-    // Photo-match indicator on the pass card
-    const matchEl = document.getElementById('pass-match-val');
-    if (matchEl) {
-      matchEl.classList.remove('match-strong', 'match-weak', 'match-fail');
+    // Photo-match indicator
+    const matchBig  = document.getElementById('pass-match-big');
+    const matchNote = document.getElementById('pass-match-note');
+    if (matchBig) {
+      matchBig.classList.remove('match-strong', 'match-weak', 'match-fail');
       if (matchScore === null || matchScore === undefined) {
-        matchEl.textContent = 'Skipped';
-      } else if (matchScore >= 0.70) {
-        matchEl.textContent = `${Math.round(matchScore * 100)}% ✓`;
-        matchEl.classList.add('match-strong');
-      } else if (matchScore >= 0.55) {
-        matchEl.textContent = `${Math.round(matchScore * 100)}% (review)`;
-        matchEl.classList.add('match-weak');
+        matchBig.textContent = 'N/A';
+        if (matchNote) matchNote.textContent = 'Face match could not be computed';
       } else {
-        matchEl.textContent = `${Math.round(matchScore * 100)}% (low)`;
-        matchEl.classList.add('match-fail');
+        const pct = Math.round(matchScore * 100);
+        matchBig.textContent = `${pct}%`;
+        if (matchScore >= 0.70) {
+          matchBig.classList.add('match-strong');
+          if (matchNote) matchNote.textContent = 'Strong match ✓';
+        } else if (matchScore >= 0.55) {
+          matchBig.classList.add('match-weak');
+          if (matchNote) matchNote.textContent = 'Moderate — retailer should review';
+        } else {
+          matchBig.classList.add('match-fail');
+          if (matchNote) matchNote.textContent = 'Low match — verify ID carefully';
+        }
       }
     }
 
@@ -998,7 +702,7 @@ async function saveAndGeneratePass() {
     document.getElementById('pass-generated').textContent =
       `${now.toLocaleDateString('en-CA')} ${now.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' })}`;
 
-    // Duplicate-account banner: if the same ID re-registered, show a friendly notice
+    // Duplicate-account banner
     const dupBanner = document.getElementById('duplicate-banner');
     const dupText   = document.getElementById('duplicate-text');
     if (data.reRegistered && data.duplicateMessage) {
@@ -1016,27 +720,27 @@ async function saveAndGeneratePass() {
     savingSection.style.display = 'none';
     passSection.style.display   = 'block';
     saveError.style.display     = 'flex';
-    saveError.textContent       = `${err.message} — pass not generated. Check server connection.`;
+    saveError.textContent       = `${err.message} — pass not generated.`;
   }
 }
 
 // ─────────────────────────────────────────────────────────────────
-//  DOWNLOAD PASS — render the pass card to PNG
+//  DOWNLOAD PASS — render the pass card to PNG (single selfie)
 // ─────────────────────────────────────────────────────────────────
 document.getElementById('download-pass-btn').addEventListener('click', async () => {
   const barcodeSvg = document.getElementById('barcode-svg');
   if (!barcodeSvg || !state.token) return;
 
-  const W = 720, H = 960;
+  const W = 720, H = 980;
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
 
-  // Card background (white, rounded look via clip)
+  // Card background
   ctx.fillStyle = '#fff';
-  roundRect(ctx, 0, 0, W, H, 0, true, false);
+  ctx.fillRect(0, 0, W, H);
 
-  // Top accent bar (red→orange→green)
+  // Top accent bar
   const grad = ctx.createLinearGradient(0, 0, W, 0);
   grad.addColorStop(0,    '#d63a2e');
   grad.addColorStop(0.45, '#f08c2a');
@@ -1047,77 +751,75 @@ document.getElementById('download-pass-btn').addEventListener('click', async () 
   // Brand row
   ctx.fillStyle = '#2d8a3e';
   ctx.font = '600 30px Fraunces, Georgia, serif';
+  ctx.textAlign = 'left';
   ctx.fillText('Mapleproof', 70, 70);
-  ctx.fillStyle = '#5a7c66';
-  ctx.font = '500 11px JetBrains Mono, monospace';
-  ctx.fillText('ONTARIO · 2026', W - 200, 68);
+  ctx.fillStyle = '#1f6f48';
+  ctx.font = '600 12px JetBrains Mono, monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText('✓ TRULIOO VERIFIED', W - 70, 68);
 
   // Eyebrow
   ctx.fillStyle = '#5a7c66';
   ctx.font = '500 14px JetBrains Mono, monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('AGE VERIFIED', W/2, 140);
+  ctx.fillText('AGE VERIFIED', W / 2, 135);
 
   // Big age badge
   ctx.fillStyle = '#2d8a3e';
-  ctx.font = '600 130px Fraunces, Georgia, serif';
-  ctx.fillText(state.serverPublicRecord?.ageBadge || '19+', W/2, 270);
+  ctx.font = '600 120px Fraunces, Georgia, serif';
+  ctx.fillText(state.serverPublicRecord?.ageBadge || '19+', W / 2, 255);
 
   // Check circle
   ctx.beginPath();
-  ctx.arc(W/2, 340, 38, 0, Math.PI * 2);
+  ctx.arc(W / 2, 320, 34, 0, Math.PI * 2);
   ctx.lineWidth = 4;
   ctx.strokeStyle = '#2d8a3e';
   ctx.stroke();
-  ctx.font = '700 38px Inter, sans-serif';
+  ctx.font = '700 34px Inter, sans-serif';
   ctx.fillStyle = '#2d8a3e';
   ctx.textBaseline = 'middle';
-  ctx.fillText('✓', W/2, 340);
+  ctx.fillText('✓', W / 2, 321);
   ctx.textBaseline = 'alphabetic';
 
   // Must check ID
   ctx.fillStyle = '#0d2418';
   ctx.font = '600 20px Inter, sans-serif';
-  ctx.fillText('Must check ID.', W/2, 430);
+  ctx.fillText('Must check ID.', W / 2, 400);
   ctx.fillStyle = '#2a4232';
   ctx.font = '400 14px Inter, sans-serif';
-  ctx.fillText('Retailer makes the final decision.', W/2, 458);
+  ctx.fillText('Retailer makes the final decision.', W / 2, 426);
 
-  // Barcode area — convert the SVG to image, then draw
+  // Barcode
   const svgString = new XMLSerializer().serializeToString(barcodeSvg);
   const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
   const svgUrl  = URL.createObjectURL(svgBlob);
 
   const barImg = new Image();
   barImg.onload = () => {
-    // Dashed top/bottom borders for the barcode strip
     ctx.strokeStyle = 'rgba(13, 36, 24, 0.18)';
     ctx.setLineDash([4, 4]);
-    ctx.beginPath(); ctx.moveTo(50, 510); ctx.lineTo(W - 50, 510); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(50, 670); ctx.lineTo(W - 50, 670); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(50, 470); ctx.lineTo(W - 50, 470); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(50, 620); ctx.lineTo(W - 50, 620); ctx.stroke();
     ctx.setLineDash([]);
 
-    // Draw barcode centered
     const targetW = W - 140;
     const ratio   = barImg.height / barImg.width;
-    const targetH = Math.min(140, targetW * ratio);
-    ctx.drawImage(barImg, 70, 525, targetW, targetH);
-
+    const targetH = Math.min(130, targetW * ratio);
+    ctx.drawImage(barImg, 70, 485, targetW, targetH);
     URL.revokeObjectURL(svgUrl);
 
-    // Footer
+    // Footer line
     ctx.fillStyle = '#6b8978';
     ctx.font = '500 12px JetBrains Mono, monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`ID · ${state.token}`, 70, 720);
+    ctx.fillText(`ID · ${state.token}`, 70, 665);
     ctx.textAlign = 'right';
     ctx.fillStyle = '#2a4232';
     ctx.font = 'italic 500 18px Fraunces, Georgia, serif';
-    ctx.fillText('Thank you!', W - 70, 720);
-
-    // Photo + meta
+    ctx.fillText('Thank you!', W - 70, 665);
     ctx.textAlign = 'left';
-    drawPhotoAndMeta(ctx, () => {
+
+    drawSelfieAndMeta(ctx, () => {
       const link = document.createElement('a');
       link.href     = canvas.toDataURL('image/png');
       link.download = `mapleproof-${state.token}.png`;
@@ -1127,80 +829,59 @@ document.getElementById('download-pass-btn').addEventListener('click', async () 
   barImg.src = svgUrl;
 });
 
-function drawPhotoAndMeta(ctx, done) {
-  // Twin photos: LIVE (left) + ID (right) — labeled
-  const photoSize = 100;
-  const gap = 24;
-  const totalW = photoSize * 2 + gap;
-  const startX = (840 - totalW) / 2;  // center horizontally on 840px-wide canvas
-  const y = 770;
+function drawSelfieAndMeta(ctx, done) {
+  const photoSize = 130;
+  const x = (720 - photoSize) / 2;
+  const y = 700;
 
-  // Labels
+  // Label
   ctx.fillStyle = '#1f6f48';
   ctx.font = '700 10px JetBrains Mono, monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('LIVE PHOTO', startX + photoSize / 2, y - 8);
-  ctx.fillText('ID PHOTO',   startX + photoSize + gap + photoSize / 2, y - 8);
+  ctx.fillText('VERIFIED SELFIE', 360, y - 10);
   ctx.textAlign = 'left';
 
-  // Frames
+  // Frame
   ctx.strokeStyle = '#e0eae3';
   ctx.lineWidth   = 2;
-  roundRect(ctx, startX, y, photoSize, photoSize, 12, false, true);
-  roundRect(ctx, startX + photoSize + gap, y, photoSize, photoSize, 12, false, true);
+  roundRect(ctx, x, y, photoSize, photoSize, 14, false, true);
 
-  // Status text below the photos
-  const metaY = y + photoSize + 20;
+  // Match score below
+  const score = state.faceMatchScore;
+  let scoreText, scoreColor;
+  if (score === null || score === undefined) {
+    scoreText = 'Face match: N/A'; scoreColor = '#9aa8a0';
+  } else {
+    const pct = Math.round(score * 100);
+    if (score >= 0.70)      { scoreText = `Face match: ${pct}% ✓`;        scoreColor = '#1f6f48'; }
+    else if (score >= 0.55) { scoreText = `Face match: ${pct}% (review)`; scoreColor = '#b85510'; }
+    else                    { scoreText = `Face match: ${pct}% (low)`;    scoreColor = '#c8362b'; }
+  }
+  const metaY = y + photoSize + 28;
+  ctx.fillStyle = scoreColor;
+  ctx.font = '700 14px Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(scoreText, 360, metaY);
+
   ctx.fillStyle = '#5a7c66';
   ctx.font = '500 10px JetBrains Mono, monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('REGISTERED · ' + (state.serverPublicRecord?.ageBadge || '19+'),
-               420, metaY);
+  ctx.fillText('REGISTERED · ' + (state.serverPublicRecord?.ageBadge || '19+'), 360, metaY + 20);
   ctx.textAlign = 'left';
 
-  let pendingLoads = 0;
-  function maybeDone() {
-    if (--pendingLoads <= 0) done();
-  }
-
-  // Draw live photo (left)
   if (state.faceImageData) {
-    pendingLoads++;
     const live = new Image();
     live.onload = () => {
       ctx.save();
-      roundRectClip(ctx, startX, y, photoSize, photoSize, 12);
-      ctx.drawImage(live, startX, y, photoSize, photoSize);
+      roundRectClip(ctx, x, y, photoSize, photoSize, 14);
+      ctx.drawImage(live, x, y, photoSize, photoSize);
       ctx.restore();
-      maybeDone();
+      done();
     };
-    live.onerror = maybeDone;
+    live.onerror = done;
     live.src = state.faceImageData;
-  }
-
-  // Draw ID photo (right)
-  if (state.idCroppedFace) {
-    pendingLoads++;
-    const idF = new Image();
-    idF.onload = () => {
-      ctx.save();
-      roundRectClip(ctx, startX + photoSize + gap, y, photoSize, photoSize, 12);
-      ctx.drawImage(idF, startX + photoSize + gap, y, photoSize, photoSize);
-      ctx.restore();
-      maybeDone();
-    };
-    idF.onerror = maybeDone;
-    idF.src = state.idCroppedFace;
   } else {
-    // Show "—" placeholder if no ID face was cropped
-    ctx.fillStyle = '#bdc8c2';
-    ctx.font = '600 24px Inter, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('—', startX + photoSize + gap + photoSize / 2, y + photoSize / 2 + 8);
-    ctx.textAlign = 'left';
+    done();
   }
-
-  if (pendingLoads === 0) done();
 }
 
 function roundRect(ctx, x, y, w, h, r, fill, stroke) {
@@ -1229,65 +910,51 @@ function roundRectClip(ctx, x, y, w, h, r) {
 //  RESTART
 // ─────────────────────────────────────────────────────────────────
 document.getElementById('restart-btn').addEventListener('click', () => {
-  stopStream(barcodeStream); stopStream(selfieStream);
-  scanActive = false; decodeInFlight = false;
-  barcodeStream = null; selfieStream = null;
+  stopStream(selfieStream);
+  selfieStream = null;
 
   state.faceImageData      = '';
-  state.idFrontImage       = '';
-  state.idBackImage        = '';
-  state.idCroppedFace      = '';
+  state.idPhotoImage       = '';
   state.faceMatchScore     = null;
   state.liveDescriptor     = null;
   state.livenessChallenges = null;
   state.token              = '';
+  state.truliooReference   = null;
   state.serverPublicRecord = null;
-  state.parsed             = { idNumber: '', dob: '', expiry: '', name: '', jurisdiction: '' };
+  state.idDetails = {
+    idType: '', firstName: '', lastName: '', dob: '',
+    idNumber: '', expiry: '', country: ''
+  };
 
-  // Reset upload-mode UI
-  ['id-front-thumb', 'id-back-thumb'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.classList.remove('has-image');
-      el.style.backgroundImage = '';
-      el.parentElement?.classList.remove('has-image');
-    }
-  });
-  ['id-front-input', 'id-back-input'].forEach(id => {
+  // Reset form
+  ['id-type-select', 'id-first-name', 'id-last-name', 'id-dob',
+   'id-number', 'id-expiry', 'id-country', 'id-photo-input'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+  const thumb = document.getElementById('id-photo-thumb');
+  if (thumb) {
+    thumb.classList.remove('has-image');
+    thumb.style.backgroundImage = '';
+    thumb.parentElement?.classList.remove('has-image');
+  }
+  const cc = document.getElementById('consent-check');
+  if (cc) cc.checked = false;
   const ub = document.getElementById('upload-process-btn');
   if (ub) ub.disabled = true;
   const us = document.getElementById('upload-status-text');
-  if (us) us.textContent = 'Add both sides of your ID to continue.';
-
-  // Reset phase 1 UI
-  barcodeSpinner.classList.remove('hidden');
-  barcodeCamLabel.textContent = 'Scanning…';
-  barcodeCamLabel.className   = 'cam-status active';
-  setBarcodeStatus('Starting camera…');
-  barcodeRetryRow.style.display = 'none';
-  barcodeProc.classList.remove('show');
+  if (us) us.textContent = 'Fill in your details and add your ID photo to continue.';
 
   document.getElementById('saving-section').style.display = 'block';
   document.getElementById('pass-section').style.display   = 'none';
   document.getElementById('barcode-svg').innerHTML        = '';
+  const tp = document.getElementById('trulioo-progress');
+  if (tp) tp.hidden = true;
 
   showPhase(1);
-  // Default to upload mode — user can opt into live camera via the toggle
-  document.getElementById('mode-upload-btn')?.classList.add('active');
-  document.getElementById('mode-camera-btn')?.classList.remove('active');
-  document.getElementById('upload-mode')?.classList.add('active');
-  document.getElementById('camera-mode')?.classList.remove('active');
 });
 
-// ── INIT ──────────────────────────────────────────────────────────
-// Camera does NOT start until the user taps "Get my pass" on the home screen.
-// startBarcodeCamera is invoked from the home button handler in PHASE NAVIGATION.
-
+// ── CLEANUP ───────────────────────────────────────────────────────
 window.addEventListener('beforeunload', () => {
-  scanActive = false;
-  stopStream(barcodeStream);
   stopStream(selfieStream);
 });

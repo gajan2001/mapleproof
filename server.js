@@ -13,18 +13,6 @@
 const express   = require('express');
 const Database  = require('better-sqlite3');
 const crypto    = require('crypto');
-
-// ── DATABASE RESET (for schema migrations) ───────────────────────
-if (process.env.RESET_DB === '1') {
-  const fs = require('fs');
-  const dbPath = './data/mapleproof.db';
-  if (fs.existsSync(dbPath)) {
-    console.log('[mapleproof] RESET_DB=1 detected, deleting old database...');
-    fs.unlinkSync(dbPath);
-    console.log('[mapleproof] Database deleted. Will create fresh schema on next startup.');
-  }
-}
-
 const path      = require('path');
 const fs        = require('fs');
 const https     = require('https');
@@ -94,6 +82,10 @@ try {
       expiry             TEXT NOT NULL,
       name_enc           BLOB,
       jurisdiction       TEXT,
+      id_type            TEXT,
+      id_country         TEXT,
+      trulioo_verified   INTEGER NOT NULL DEFAULT 0,
+      trulioo_reference  TEXT,
       face_enc           BLOB NOT NULL,
       id_front_enc       BLOB,
       id_back_enc        BLOB,
@@ -184,6 +176,10 @@ try {
       ['id_front_enc',         'BLOB'],
       ['id_back_enc',          'BLOB'],
       ['id_face_enc',          'BLOB'],
+      ['id_type',              'TEXT'],
+      ['id_country',           'TEXT'],
+      ['trulioo_verified',     'INTEGER NOT NULL DEFAULT 0'],
+      ['trulioo_reference',    'TEXT'],
       ['face_match_score',     'REAL'],
       ['face_match_at',        'TEXT'],
       ['liveness_verified',    'INTEGER NOT NULL DEFAULT 0'],
@@ -491,9 +487,73 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// ── /api/trulioo-verify ──────────────────────────────────────────
+//  SIMULATED Trulioo identity verification.
+//
+//  ⚠️  THIS IS A MOCK. It does not contact Trulioo. It performs basic
+//  sanity checks on the submitted details and then returns a synthetic
+//  "verified" response with a fake reference number.
+//
+//  When a real Trulioo (https://www.trulioo.com/) contract is in place,
+//  replace the body of this handler with a call to Trulioo's
+//  GlobalGateway "verify" API. The request/response shape the browser
+//  expects (idType, name, dob, idNumber, country → { ok, verified,
+//  reference }) is intentionally simple so the swap is contained to
+//  this one function.
+// ─────────────────────────────────────────────────────────────────
+app.post('/api/trulioo-verify', (req, res) => {
+  const ip = (req.ip || req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim();
+  if (!persistentRateLimit(`trulioo:${ip}`, 20, 60 * 60_000)) {
+    return res.status(429).json({ ok: false, error: 'Too many verification attempts. Wait a few minutes.' });
+  }
+
+  try {
+    const { idType, firstName, lastName, dob, idNumber, expiry, country } = req.body || {};
+
+    // Basic sanity checks (a real Trulioo call would do the heavy lifting)
+    if (!idType || !firstName || !lastName || !dob || !idNumber || !expiry || !country) {
+      return res.status(400).json({ ok: false, verified: false, error: 'Missing required identity fields.' });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+      return res.status(400).json({ ok: false, verified: false, error: 'Date of birth is invalid.' });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry)) {
+      return res.status(400).json({ ok: false, verified: false, error: 'Expiry date is invalid.' });
+    }
+    const age = calculateAge(dob);
+    if (age < 18) {
+      auditLog('SYSTEM', 'TRULIOO_VERIFY_REJECT', null, req, { reason: 'under_age', age });
+      return res.status(403).json({ ok: false, verified: false, error: `Applicant is ${age} — under the minimum age.` });
+    }
+    const exp = expiryStatus(expiry);
+    if (exp.state === 'expired') {
+      auditLog('SYSTEM', 'TRULIOO_VERIFY_REJECT', null, req, { reason: 'expired_id' });
+      return res.status(403).json({ ok: false, verified: false, error: 'This identity document is expired.' });
+    }
+
+    // ── SIMULATED SUCCESS ──
+    // Synthetic reference; format loosely mirrors Trulioo transaction IDs.
+    const reference = 'TRL-SIM-' + crypto.randomBytes(8).toString('hex').toUpperCase();
+
+    auditLog('SYSTEM', 'TRULIOO_VERIFY_SIMULATED', null, req,
+             { idType, country, reference, note: 'MOCK — not a real Trulioo call' });
+
+    return res.json({
+      ok: true,
+      verified: true,
+      simulated: true,        // honest flag — this is NOT a real Trulioo result
+      reference,
+      datasource: 'SIMULATED',
+      message: 'Identity verification simulated successfully.'
+    });
+  } catch (err) {
+    console.error('[trulioo-verify]', err);
+    return res.status(500).json({ ok: false, verified: false, error: 'Verification service error.' });
+  }
+});
+
 // ── /api/register ────────────────────────────────────────────────
 app.post('/api/register', async (req, res) => {
-  // Tighter rate limit: 3 registrations per IP per 24h (but allow more in a short window for re-registers)
   const ip = (req.ip || req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim();
   if (!persistentRateLimit(`reg-day:${ip}`, 5, 24 * 60 * 60_000)) {
     auditLog('CUSTOMER', 'REGISTER_BLOCKED', null, req, { reason: 'daily_limit' });
@@ -505,27 +565,31 @@ app.post('/api/register', async (req, res) => {
 
   try {
     const {
-      idNumber, dob, expiry, name, jurisdiction,
-      faceImageData,
-      idFrontImage,         // optional but expected: data URL of front of ID
-      idBackImage,          // optional: data URL of back of ID
-      idFaceImage,          // optional: cropped face from front of ID
+      idType, firstName, lastName, name,
+      idNumber, dob, expiry, country,
+      faceImageData,                 // verified live selfie (ONLY image we store)
       faceMatchScore,
       livenessVerified,
       livenessChallenges,
-      consentAccepted,      // REQUIRED: customer ticked consent checkbox
-      consentVersion,       // version string of consent text
-      ocrFrontText,         // optional: OCR-extracted text from ID front (browser-side)
-      deviceId              // optional: stable device fingerprint
+      truliooVerified,               // must be true (set after /api/trulioo-verify)
+      truliooReference,              // reference returned by /api/trulioo-verify
+      consentAccepted,               // REQUIRED
+      consentVersion,
+      deviceId
     } = req.body || {};
 
-    if (!idNumber || !dob || !expiry || !faceImageData)
+    // ── Required fields ──
+    if (!idType || !idNumber || !dob || !expiry || !country || !faceImageData)
       return res.status(400).json({ ok: false, error: 'Missing required fields.' });
 
     // ── CONSENT REQUIRED ──
-    if (!consentAccepted) {
+    if (!consentAccepted)
       return res.status(400).json({ ok: false, error: 'You must accept the privacy notice and terms to register.' });
-    }
+
+    // ── TRULIOO VERIFICATION REQUIRED ──
+    // The pass cannot be issued unless identity verification passed.
+    if (!truliooVerified)
+      return res.status(400).json({ ok: false, error: 'Identity verification must be completed before registration.' });
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dob))    return res.status(400).json({ ok: false, error: 'DOB must be YYYY-MM-DD.' });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry)) return res.status(400).json({ ok: false, error: 'Expiry must be YYYY-MM-DD.' });
@@ -534,12 +598,9 @@ app.post('/api/register', async (req, res) => {
     if (faceImageData.length > 8_000_000)
       return res.status(413).json({ ok: false, error: 'Face image too large.' });
 
-    if (idFrontImage && (typeof idFrontImage !== 'string' || !idFrontImage.startsWith('data:image/')))
-      return res.status(400).json({ ok: false, error: 'idFrontImage must be a data: URL.' });
-    if (idBackImage && (typeof idBackImage !== 'string' || !idBackImage.startsWith('data:image/')))
-      return res.status(400).json({ ok: false, error: 'idBackImage must be a data: URL.' });
-    if (idFaceImage && (typeof idFaceImage !== 'string' || !idFaceImage.startsWith('data:image/')))
-      return res.status(400).json({ ok: false, error: 'idFaceImage must be a data: URL.' });
+    const VALID_ID_TYPES = ['passport', 'drivers_license', 'national_id', 'state_id', 'residence_permit'];
+    if (!VALID_ID_TYPES.includes(idType))
+      return res.status(400).json({ ok: false, error: 'Invalid ID type.' });
 
     let matchScore = null;
     if (faceMatchScore !== undefined && faceMatchScore !== null) {
@@ -555,44 +616,16 @@ app.post('/api/register', async (req, res) => {
     const exp = expiryStatus(expiry);
     if (exp.state === 'expired') {
       auditLog('CUSTOMER', 'REGISTER_REJECT_EXPIRED', hashId(idNumber).slice(0, 16), req, { expiry });
-      return res.status(403).json({ ok: false, error: 'Government ID is expired.' });
+      return res.status(403).json({ ok: false, error: 'Identity document is expired.' });
     }
 
-    // ── OCR CROSS-CHECK ──
-    // If the browser sent OCR'd text from the ID front, check it matches the
-    // barcode data on the back (helps detect tampered IDs).
-    let ocrStatus = 'not_run';
-    if (ocrFrontText && typeof ocrFrontText === 'string') {
-      const text = ocrFrontText.toLowerCase();
-      const dobYear = dob.substring(0, 4);
-      const expYear = expiry.substring(0, 4);
-      const dobMonth = dob.substring(5, 7);
-      const expMonth = expiry.substring(5, 7);
-      const lastName = (name || '').split(/[, ]+/).filter(Boolean).slice(-1)[0] || '';
-
-      let hits = 0, total = 0;
-      if (dobYear)   { total++; if (text.includes(dobYear)) hits++; }
-      if (expYear)   { total++; if (text.includes(expYear)) hits++; }
-      if (lastName.length >= 3) { total++; if (text.includes(lastName.toLowerCase())) hits++; }
-      if (total > 0) {
-        const ratio = hits / total;
-        if (ratio >= 0.66)      ocrStatus = 'match';
-        else if (ratio >= 0.33) ocrStatus = 'partial';
-        else                    ocrStatus = 'mismatch';
-      }
-    }
-
-    // ── FRAUD DETECTION: same face descriptor used by different ID? ──
-    // We can't store descriptors (privacy), but we can flag suspicious patterns:
-    // - Many distinct id_hash values registered from the same IP in 7 days
+    // ── FRAUD DETECTION: many distinct IDs from one IP in 7 days ──
     const recentByIp = db.prepare(`
       SELECT COUNT(DISTINCT id_hash) as n FROM customers
        WHERE registration_ip = ? AND registered_at > ?
     `).get(ip, new Date(Date.now() - 7 * 86_400_000).toISOString());
     const fraudFlags = [];
-    if (recentByIp && recentByIp.n >= 3) {
-      fraudFlags.push('MULTI_ID_SAME_IP');
-    }
+    if (recentByIp && recentByIp.n >= 3) fraudFlags.push('MULTI_ID_SAME_IP');
 
     // ── GEOLOCATION (best effort) ──
     const geo = await geolocate(ip);
@@ -601,16 +634,13 @@ app.post('/api/register', async (req, res) => {
     const liveChallengesJson = Array.isArray(livenessChallenges) ? JSON.stringify(livenessChallenges) : null;
     const fraudHold = fraudFlags.length > 0 ? 1 : 0;
     const fraudHoldReason = fraudFlags.length > 0 ? fraudFlags.join(',') : null;
+    const truliooRef = (typeof truliooReference === 'string' && truliooReference.length <= 64)
+                       ? truliooReference : null;
+    const fullName = (name || `${firstName || ''} ${lastName || ''}`).trim();
 
     const idHash = hashId(idNumber);
     const now = new Date().toISOString();
     const existing = db.prepare('SELECT token, registered_at FROM customers WHERE id_hash = ?').get(idHash);
-
-    // ── PRIVACY MINIMIZATION ──
-    // We do NOT store the full id_front_enc or id_back_enc by default.
-    // We extract what we need (face crop, AAMVA fields) and discard the rest.
-    // Set MAPLEPROOF_RETAIN_FULL_IDS=1 only if you have a regulatory reason.
-    const retainFullIds = process.env.MAPLEPROOF_RETAIN_FULL_IDS === '1';
 
     let token, action;
     if (existing) {
@@ -619,7 +649,9 @@ app.post('/api/register', async (req, res) => {
       db.prepare(`
         UPDATE customers
            SET dob_enc = ?, expiry = ?, name_enc = ?, jurisdiction = ?,
-               face_enc = ?, id_front_enc = ?, id_back_enc = ?, id_face_enc = ?,
+               id_type = ?, id_country = ?,
+               trulioo_verified = ?, trulioo_reference = ?,
+               face_enc = ?, id_front_enc = NULL, id_back_enc = NULL, id_face_enc = NULL,
                face_match_score = ?, face_match_at = ?,
                liveness_verified = ?, liveness_challenges = ?,
                consent_version = ?, consent_at = ?,
@@ -628,20 +660,19 @@ app.post('/api/register', async (req, res) => {
                fraud_hold = ?, fraud_hold_reason = ?,
                updated_at = ?, dob = NULL
          WHERE token = ?
-      `).run(encrypt(dob), expiry, encrypt(name || ''), jurisdiction || '',
+      `).run(encrypt(dob), expiry, encrypt(fullName), country || '',
+             idType, country || '',
+             1, truliooRef,
              encrypt(faceImageData),
-             retainFullIds && idFrontImage ? encrypt(idFrontImage) : null,
-             retainFullIds && idBackImage  ? encrypt(idBackImage)  : null,
-             idFaceImage  ? encrypt(idFaceImage)  : null,
              matchScore, matchScore !== null ? now : null,
              liveOk, liveChallengesJson,
-             consentVersion || '1.0', now,
+             consentVersion || '2.0', now,
              ip, geo.country, geo.city,
-             ocrStatus,
+             'not_run',
              fraudHold, fraudHoldReason,
              now, token);
       auditLog('CUSTOMER', 'REGISTER_UPDATED', token, req,
-               { ageBadge: ageBadge(age), ocrStatus, matchScore, geo: geo.country });
+               { ageBadge: ageBadge(age), idType, country, matchScore, truliooRef });
     } else {
       do { token = generateToken(); }
       while (db.prepare('SELECT 1 FROM customers WHERE token = ?').get(token));
@@ -649,6 +680,7 @@ app.post('/api/register', async (req, res) => {
       db.prepare(`
         INSERT INTO customers
           (token, id_hash, dob_enc, expiry, name_enc, jurisdiction,
+           id_type, id_country, trulioo_verified, trulioo_reference,
            face_enc, id_front_enc, id_back_enc, id_face_enc,
            face_match_score, face_match_at,
            liveness_verified, liveness_challenges,
@@ -657,21 +689,19 @@ app.post('/api/register', async (req, res) => {
            ocr_match_status,
            fraud_hold, fraud_hold_reason,
            registered_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(token, idHash, encrypt(dob), expiry, encrypt(name || ''),
-             jurisdiction || '', encrypt(faceImageData),
-             retainFullIds && idFrontImage ? encrypt(idFrontImage) : null,
-             retainFullIds && idBackImage  ? encrypt(idBackImage)  : null,
-             idFaceImage  ? encrypt(idFaceImage)  : null,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(token, idHash, encrypt(dob), expiry, encrypt(fullName), country || '',
+             idType, country || '', 1, truliooRef,
+             encrypt(faceImageData), null, null, null,
              matchScore, matchScore !== null ? now : null,
              liveOk, liveChallengesJson,
-             consentVersion || '1.0', now,
+             consentVersion || '2.0', now,
              ip, geo.country, geo.city,
-             ocrStatus,
+             'not_run',
              fraudHold, fraudHoldReason,
              now, now);
       auditLog('CUSTOMER', 'REGISTER_CREATED', token, req,
-               { ageBadge: ageBadge(age), ocrStatus, matchScore, geo: geo.country, fraudFlags });
+               { ageBadge: ageBadge(age), idType, country, matchScore, truliooRef, fraudFlags });
     }
 
     return res.json({
@@ -686,12 +716,13 @@ app.post('/api/register', async (req, res) => {
       publicRecord: {
         ageBadge:          ageBadge(age),
         verified:          age >= LEGAL_AGE,
-        jurisdiction:      jurisdiction || '',
+        idType,
+        idCountry:         country || '',
+        truliooVerified:   true,
         expiry,
         expiryStatus:      exp.state,
         faceMatchScore:    matchScore,
         livenessVerified:  !!liveOk,
-        ocrMatchStatus:    ocrStatus,
         fraudHold:         !!fraudHold,
         registeredAt:      existing ? existing.registered_at : now
       }
@@ -719,10 +750,11 @@ app.get('/api/pass/:token', async (req, res) => {
     const retailer = authenticateRetailer(req);
 
     const row = db.prepare(`
-      SELECT token, dob, dob_enc, expiry, jurisdiction, face_enc, id_face_enc,
+      SELECT token, dob, dob_enc, expiry, jurisdiction, id_type, id_country,
+             trulioo_verified, face_enc,
              face_match_score, face_match_at,
              liveness_verified, liveness_challenges,
-             ocr_match_status, fraud_hold, fraud_hold_reason,
+             fraud_hold, fraud_hold_reason,
              registered_at, updated_at, last_seen_at, scan_count,
              registration_country, registration_city
         FROM customers WHERE token = ?
@@ -746,6 +778,7 @@ app.get('/api/pass/:token', async (req, res) => {
     }
 
     const livenessVerified = !!row.liveness_verified;
+    const truliooVerified  = !!row.trulioo_verified;
     const fraudHold = !!row.fraud_hold;
 
     // Geographic anomaly: scan country differs from registration country
@@ -765,7 +798,7 @@ app.get('/api/pass/:token', async (req, res) => {
     if (matchStatus === 'fail')         flags.push('PHOTO_MATCH_FAIL');
     else if (matchStatus === 'weak')    flags.push('PHOTO_MATCH_WEAK');
     if (!livenessVerified)              flags.push('NO_LIVENESS_CHECK');
-    if (row.ocr_match_status === 'mismatch') flags.push('OCR_MISMATCH');
+    if (!truliooVerified)               flags.push('NO_TRULIOO_VERIFICATION');
     if (geoAnomaly)                     flags.push('GEO_ANOMALY');
 
     const now = new Date().toISOString();
@@ -786,17 +819,19 @@ app.get('/api/pass/:token', async (req, res) => {
       publicRecord: {
         ageBadge:         ageBadge(age),
         verified:         age >= LEGAL_AGE && exp.state !== 'expired'
-                          && matchStatus !== 'fail' && livenessVerified && !fraudHold,
+                          && matchStatus !== 'fail' && livenessVerified
+                          && truliooVerified && !fraudHold,
         expiry:           row.expiry,
         expiryStatus:     exp.state,
         expiryDays:       exp.days,
-        jurisdiction:     row.jurisdiction || '',
+        idType:           row.id_type || '',
+        idCountry:        row.id_country || row.jurisdiction || '',
         faceImage:        decrypt(row.face_enc),
-        idFaceImage:      row.id_face_enc ? decrypt(row.id_face_enc) : null,
+        idFaceImage:      null,    // v10: ID photos are never stored
         faceMatchScore:   matchScore,
         faceMatchStatus:  matchStatus,
         livenessVerified: livenessVerified,
-        ocrMatchStatus:   row.ocr_match_status || 'not_run',
+        truliooVerified:  truliooVerified,
         fraudHold:        fraudHold,
         registeredAt:     row.registered_at,
         lastSeenAt:       row.last_seen_at,
@@ -957,18 +992,21 @@ app.get('/api/admin/users', requireAdmin, (req, res) => {
       const dob = readDob(row);
       const age = calculateAge(dob);
       return {
-        token:        row.token,
-        ageBadge:     ageBadge(age),
+        token:           row.token,
+        ageBadge:        ageBadge(age),
         age,
-        nextTierIn:   daysToNextTier(dob),
-        expiry:       row.expiry,
-        expiryStatus: expiryStatus(row.expiry).state,
-        jurisdiction: row.jurisdiction || '',
-        registeredAt: row.registered_at,
-        updatedAt:    row.updated_at,
-        lastSeenAt:   row.last_seen_at,
-        scanCount:    row.scan_count,
-        thumbnail:    decrypt(row.face_enc)
+        nextTierIn:      daysToNextTier(dob),
+        expiry:          row.expiry,
+        expiryStatus:    expiryStatus(row.expiry).state,
+        jurisdiction:    row.jurisdiction || '',
+        idType:          row.id_type || '',
+        idCountry:       row.id_country || '',
+        truliooVerified: !!row.trulioo_verified,
+        registeredAt:    row.registered_at,
+        updatedAt:       row.updated_at,
+        lastSeenAt:      row.last_seen_at,
+        scanCount:       row.scan_count,
+        thumbnail:       decrypt(row.face_enc)
       };
     });
     const total = db.prepare('SELECT COUNT(*) AS n FROM customers').get().n;

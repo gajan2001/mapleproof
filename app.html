@@ -68,93 +68,125 @@
       </div>
     </section>
 
-    <!-- ─── PHASE 1: SCAN ID ─── -->
+    <!-- ─── PHASE 1: ID DETAILS (worldwide, manual entry) ─── -->
     <section id="phase-scan" class="phase">
       <header class="phase-head">
-        <h2>Scan your ID</h2>
-        <p>Use your camera, or upload a clear photo of your licence.</p>
+        <h2>Verify your identity</h2>
+        <p>Select your ID type and enter your details. We support IDs from around the world.</p>
       </header>
 
-      <!-- Mode toggle: live camera vs upload -->
-      <div class="mode-toggle">
-        <button id="mode-upload-btn" class="active" type="button">Upload photo (faster)</button>
-        <button id="mode-camera-btn" type="button">Live camera</button>
+      <!-- ID Type Selector -->
+      <div class="id-type-selector">
+        <label for="id-type-select">ID Type</label>
+        <select id="id-type-select" required>
+          <option value="">Select your ID type…</option>
+          <option value="passport">Passport</option>
+          <option value="drivers_license">Driver's License</option>
+          <option value="national_id">National ID Card</option>
+          <option value="state_id">State / Provincial ID</option>
+          <option value="residence_permit">Residence Permit</option>
+        </select>
       </div>
 
-      <!-- ── UPLOAD MODE (default — front + back) ─── -->
-      <section id="upload-mode" class="scan-section active">
-        <div class="upload-grid">
-          <label class="upload-card" for="id-front-input">
-            <div class="upload-thumb" id="id-front-thumb">
-              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="6" y="10" width="36" height="28" rx="3"/>
-                <circle cx="16" cy="22" r="4"/>
-                <path d="M24 20 L36 20 M24 26 L34 26"/>
-              </svg>
-              <span class="upload-label">Front of ID</span>
-              <span class="upload-hint">Tap to choose photo</span>
-            </div>
-            <input type="file" id="id-front-input" accept="image/*" capture="environment" hidden>
-          </label>
-
-          <label class="upload-card" for="id-back-input">
-            <div class="upload-thumb" id="id-back-thumb">
-              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="6" y="10" width="36" height="28" rx="3"/>
-                <path d="M10 30 H38 M10 26 H38 M10 22 H38 M10 18 H38"/>
-              </svg>
-              <span class="upload-label">Back of ID</span>
-              <span class="upload-hint">Has the barcode</span>
-            </div>
-            <input type="file" id="id-back-input" accept="image/*" capture="environment" hidden>
-          </label>
-        </div>
-
-        <div id="upload-status" class="scan-status">
-          <span id="upload-status-text">Add both sides of your ID to continue.</span>
-        </div>
-
-        <!-- Consent + privacy notice (PIPEDA requirement) -->
-        <label class="consent-row">
-          <input type="checkbox" id="consent-check" required>
-          <span class="consent-text">
-            I consent to Mapleproof processing my government ID for age verification.
-            I have read the <a href="/privacy" target="_blank">Privacy Policy</a> and
-            <a href="/terms" target="_blank">Terms of Service</a>.
-            I understand my data is encrypted, never sold, and I can delete it anytime via
-            <a href="/delete" target="_blank">/delete</a>.
-          </span>
-        </label>
-
-        <div class="phase-actions">
-          <button id="upload-process-btn" class="btn-primary" disabled>Process ID</button>
-          <button id="back-home-btn-2" class="btn-ghost">&larr; Back</button>
-        </div>
-      </section>
-
-      <!-- ── CAMERA MODE (live PDF417 scan, opt-in) ─── -->
-      <section id="camera-mode" class="scan-section">
-        <div class="camera-wrap">
-          <video id="barcode-video" autoplay playsinline muted></video>
-          <canvas id="barcode-proc" hidden></canvas>
-          <div class="scan-frame">
-            <div class="scan-line"></div>
-            <span class="corner tl"></span><span class="corner tr"></span>
-            <span class="corner bl"></span><span class="corner br"></span>
+      <!-- Manual ID Entry -->
+      <div class="manual-id-entry">
+        <div class="form-row">
+          <div class="form-field">
+            <label for="id-first-name">First / Given Name</label>
+            <input type="text" id="id-first-name" maxlength="100" placeholder="As shown on ID" autocomplete="off">
           </div>
-          <div id="barcode-cam-label" class="cam-status">Looking for a barcode&hellip;</div>
+          <div class="form-field">
+            <label for="id-last-name">Last / Family Name</label>
+            <input type="text" id="id-last-name" maxlength="100" placeholder="As shown on ID" autocomplete="off">
+          </div>
         </div>
 
-        <div id="barcode-status" class="scan-status">
-          <div id="barcode-spinner" class="spinner"></div>
-          <span id="barcode-status-text">Position the barcode in the frame.</span>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="id-dob">Date of Birth</label>
+            <input type="date" id="id-dob">
+          </div>
+          <div class="form-field">
+            <label for="id-number">ID / Document Number</label>
+            <input type="text" id="id-number" maxlength="40" placeholder="Passport / licence number" autocomplete="off" spellcheck="false">
+          </div>
         </div>
 
-        <div id="barcode-retry-row" class="phase-actions" style="display:none">
-          <button id="retry-barcode-btn" class="btn-primary">Try again</button>
-          <button id="back-home-btn" class="btn-ghost">&larr; Back</button>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="id-expiry">Expiry Date</label>
+            <input type="date" id="id-expiry">
+          </div>
+          <div class="form-field">
+            <label for="id-country">Country of Issue</label>
+            <select id="id-country">
+              <option value="">Select country…</option>
+              <option value="CA">Canada</option>
+              <option value="US">United States</option>
+              <option value="GB">United Kingdom</option>
+              <option value="AU">Australia</option>
+              <option value="NZ">New Zealand</option>
+              <option value="IE">Ireland</option>
+              <option value="IN">India</option>
+              <option value="PK">Pakistan</option>
+              <option value="BD">Bangladesh</option>
+              <option value="LK">Sri Lanka</option>
+              <option value="PH">Philippines</option>
+              <option value="CN">China</option>
+              <option value="JP">Japan</option>
+              <option value="KR">South Korea</option>
+              <option value="MX">Mexico</option>
+              <option value="BR">Brazil</option>
+              <option value="DE">Germany</option>
+              <option value="FR">France</option>
+              <option value="IT">Italy</option>
+              <option value="ES">Spain</option>
+              <option value="NG">Nigeria</option>
+              <option value="ZA">South Africa</option>
+              <option value="AE">United Arab Emirates</option>
+              <option value="SA">Saudi Arabia</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
         </div>
-      </section>
+      </div>
+
+      <!-- ID photo upload — for face matching ONLY. Never stored. -->
+      <div class="id-photo-section">
+        <label class="upload-card single" for="id-photo-input">
+          <div class="upload-thumb" id="id-photo-thumb">
+            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="6" y="10" width="36" height="28" rx="3"/>
+              <circle cx="17" cy="22" r="5"/>
+              <path d="M28 19 L38 19 M28 25 L36 25 M10 34 L20 34"/>
+            </svg>
+            <span class="upload-label">Photo of your ID</span>
+            <span class="upload-hint">Clear photo showing your face — used only to match, never stored</span>
+          </div>
+          <input type="file" id="id-photo-input" accept="image/*" capture="environment" hidden>
+        </label>
+      </div>
+
+      <div id="upload-status" class="scan-status">
+        <span id="upload-status-text">Fill in your details and add your ID photo to continue.</span>
+      </div>
+
+      <!-- Consent + privacy notice (PIPEDA requirement) -->
+      <label class="consent-row">
+        <input type="checkbox" id="consent-check" required>
+        <span class="consent-text">
+          I consent to Mapleproof processing my identity document for age verification.
+          I have read the <a href="/privacy" target="_blank">Privacy Policy</a> and
+          <a href="/terms" target="_blank">Terms of Service</a>.
+          I understand my ID photo is used only for face matching and is never stored,
+          and I can delete my account anytime via <a href="/delete" target="_blank">/delete</a>.
+        </span>
+      </label>
+
+      <div class="phase-actions">
+        <button id="upload-process-btn" class="btn-primary" disabled>Continue to verification</button>
+        <button id="back-home-btn-2" class="btn-ghost">&larr; Back</button>
+      </div>
     </section>
 
     <!-- ─── PHASE 2: LIVENESS CHECK (replaces simple selfie) ─── -->
@@ -226,6 +258,21 @@
       <div id="saving-section" class="saving-section">
         <div class="spinner big"></div>
         <p>Saving your pass&hellip;</p>
+        <!-- Trulioo verification progress -->
+        <div id="trulioo-progress" class="trulioo-progress" hidden>
+          <div class="trulioo-step" id="trulioo-step-1">
+            <span class="trulioo-dot"></span> Connecting to Trulioo identity network…
+          </div>
+          <div class="trulioo-step" id="trulioo-step-2">
+            <span class="trulioo-dot"></span> Verifying document authenticity…
+          </div>
+          <div class="trulioo-step" id="trulioo-step-3">
+            <span class="trulioo-dot"></span> Cross-checking global watchlists…
+          </div>
+          <div class="trulioo-step" id="trulioo-step-4">
+            <span class="trulioo-dot"></span> Verification complete ✓
+          </div>
+        </div>
       </div>
 
       <div id="pass-section" class="pass-section" style="display:none">
@@ -237,6 +284,7 @@
               <img class="brand-mark-img sm" src="logo-leaf-mark.png" alt="" width="24" height="24">
               <span>Mapleproof</span>
             </div>
+            <span class="pass-trulioo-badge">✓ Trulioo Verified</span>
           </div>
 
           <div class="pass-verified">
@@ -249,16 +297,16 @@
             <p class="pf-subline">Retailer makes the final decision.</p>
           </div>
 
-          <!-- Twin-photo row: LIVE face + ID face side by side -->
-          <div class="pass-twin-photos">
-            <div class="pass-photo-card">
-              <div class="pass-photo-label">LIVE PHOTO</div>
-              <img id="pass-face-photo" class="pass-photo-img" src="" alt="Live photo">
+          <!-- Single SELFIE photo + match score -->
+          <div class="pass-selfie-block">
+            <div class="pass-photo-card large">
+              <div class="pass-photo-label">VERIFIED SELFIE</div>
+              <img id="pass-face-photo" class="pass-photo-img large" src="" alt="Verified selfie">
             </div>
-            <div class="pass-photo-divider"></div>
-            <div class="pass-photo-card">
-              <div class="pass-photo-label">ID PHOTO</div>
-              <img id="pass-id-photo" class="pass-photo-img" src="" alt="ID photo">
+            <div class="pass-match-block">
+              <div class="pf-label tiny">Face match to ID</div>
+              <div class="pass-match-big" id="pass-match-big">&mdash;</div>
+              <div class="pass-match-note" id="pass-match-note">Compared at registration</div>
             </div>
           </div>
 
@@ -282,8 +330,8 @@
                 <div class="pf-value ok" id="pass-status-val">REGISTERED</div>
               </div>
               <div>
-                <div class="pf-label">Photo Match</div>
-                <div class="pf-value" id="pass-match-val">&mdash;</div>
+                <div class="pf-label">ID Type</div>
+                <div class="pf-value" id="pass-idtype-val">&mdash;</div>
               </div>
               <div>
                 <div class="pf-label">Issued</div>
@@ -317,9 +365,8 @@
     Mapleproof &middot; Privacy-first age verification
   </footer>
 
-  <!-- Browser-side libraries (no server cost): face matching + barcode reading -->
+  <!-- Browser-side libraries (no server cost): face matching only -->
   <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
   <script src="liveness.js"></script>
   <script type="module" src="app.js"></script>
 </body>

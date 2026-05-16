@@ -1513,3 +1513,197 @@ img, svg, video, canvas { max-width: 100%; display: block; }
   width: 100%;
   box-shadow: 0 24px 60px -20px rgba(13, 51, 38, 0.3);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   v10 — WORLDWIDE ID FORM, TRULIOO, REDESIGNED PASS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── ID TYPE SELECTOR ── */
+.id-type-selector {
+  margin-bottom: 20px;
+}
+.id-type-selector label,
+.form-field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2d4438;
+  margin-bottom: 6px;
+  letter-spacing: 0.01em;
+}
+.id-type-selector select,
+.form-field input,
+.form-field select {
+  width: 100%;
+  padding: 12px 14px;
+  border: 2px solid #e2ebe5;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 15px;
+  color: #0a1f17;
+  background: #fff;
+  transition: border-color 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.id-type-selector select,
+.form-field select {
+  background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%235a7065' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  padding-right: 38px;
+}
+.id-type-selector select:focus,
+.form-field input:focus,
+.form-field select:focus {
+  outline: none;
+  border-color: #1f6f48;
+}
+
+/* ── MANUAL ID ENTRY ── */
+.manual-id-entry {
+  margin-bottom: 20px;
+}
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.form-row:last-child {
+  margin-bottom: 0;
+}
+@media (max-width: 480px) {
+  .form-row {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}
+
+/* ── ID PHOTO SECTION ── */
+.id-photo-section {
+  margin-bottom: 18px;
+}
+.upload-card.single {
+  display: block;
+  width: 100%;
+}
+
+/* ── CONSENT ROW (ensure spacing in v10 flow) ── */
+.phase#phase-scan .consent-row {
+  margin: 18px 0;
+}
+
+/* ── TRULIOO VERIFICATION BADGE ON PASS ── */
+.pass-trulioo-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #1f6f48;
+  background: #e8f1ec;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* ── PASS SELFIE BLOCK (single photo, replaces twin photos) ── */
+.pass-selfie-block {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 18px 24px;
+  justify-content: center;
+}
+.pass-photo-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.pass-photo-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #1f6f48;
+}
+.pass-photo-img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 2px solid #e0eae3;
+  background: #f3f7f4;
+}
+.pass-photo-img.large {
+  width: 116px;
+  height: 116px;
+  border-radius: 14px;
+}
+.pass-match-block {
+  text-align: center;
+}
+.pass-match-big {
+  font-size: 38px;
+  font-weight: 700;
+  font-family: 'Fraunces', Georgia, serif;
+  line-height: 1.1;
+  color: #5a7065;
+}
+.pass-match-big.match-strong { color: #1f6f48; }
+.pass-match-big.match-weak   { color: #b85510; }
+.pass-match-big.match-fail   { color: #c8362b; }
+.pass-match-note {
+  font-size: 11px;
+  color: #5a7065;
+  margin-top: 2px;
+  max-width: 130px;
+}
+
+/* ── TRULIOO PROGRESS (during saving) ── */
+.trulioo-progress {
+  margin-top: 22px;
+  text-align: left;
+  max-width: 340px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.trulioo-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 14px;
+  color: #9aa8a0;
+  transition: color 0.3s;
+}
+.trulioo-step .trulioo-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #d4ddd7;
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+.trulioo-step.active {
+  color: #2d4438;
+}
+.trulioo-step.active .trulioo-dot {
+  background: #f08c2a;
+  animation: trulioo-pulse 0.8s ease-in-out infinite;
+}
+.trulioo-step.done {
+  color: #1f6f48;
+}
+.trulioo-step.done .trulioo-dot {
+  background: #1f6f48;
+  animation: none;
+}
+@keyframes trulioo-pulse {
+  0%, 100% { transform: scale(1);   opacity: 1;   }
+  50%      { transform: scale(1.4); opacity: 0.6; }
+}
+
+/* ── RETAILER SINGLE-PHOTO RESULT (override twin layout) ── */
+.result-twin-photos {
+  justify-content: center;
+}

@@ -1,189 +1,157 @@
-# Mapleproof — v9 (PIPEDA + AGCO compliance build)
+# Mapleproof — v10 (worldwide IDs + Trulioo verification)
 
-This release transforms Mapleproof from a working prototype into a product that's defensible from a privacy/compliance standpoint. **Lawyer review of the legal text is still recommended before public launch** — but the technical and operational scaffolding is now in place.
+This release makes Mapleproof work with **identity documents from any country** — passports, national ID cards, residence permits, driver's licenses — and adds an identity-verification step routed through **Trulioo** (currently **simulated** — see the warning below).
 
-## What changed in v9
-
-### 1. Privacy & legal infrastructure
-
-| New page | URL | Purpose |
-|---|---|---|
-| Privacy Policy | `/privacy` | Full PIPEDA-aligned policy: what we collect, how long, encryption details, your rights, breach notification, third parties, contact |
-| Terms of Service | `/terms` | Eligibility, account responsibilities, what Mapleproof does/doesn't do, retailer obligations, disclaimers, liability cap, governing law |
-| FAQ | `/faq` | Honest Q&A grouped: Basics, Privacy, How it works, For retailers |
-| Retailers | `/retailers` | Pitch, compliance grid, AGCO inspection guidance, signup form |
-| Delete | `/delete` | Customer self-service deletion (deletion request OR immediate) |
-
-The customer app (`/app`) now has a **mandatory consent checkbox** before the "Process ID" button. The checkbox links to /privacy and /terms; without ticking it, the button stays disabled and the server rejects the registration.
-
-### 2. Data security upgrades
-
-**Encryption key from environment variable.** Previously stored in a file alongside the database (so a single backup leak compromised both). Now read from `MAPLEPROOF_ENCRYPTION_KEY` (base64 of 32 bytes). File-based fallback retained for local dev.
-
-**Admin token from environment.** `MAPLEPROOF_ADMIN_TOKEN` env var.
-
-**Privacy minimization (default ON).** The server no longer stores full ID front/back images. Only the cropped face (with circular mask), the AAMVA fields (encrypted), and the live-face crop are kept. Set `MAPLEPROOF_RETAIN_FULL_IDS=1` only if you have a regulatory reason to retain raw IDs.
-
-**Tamper-evident audit log.** Every action (registrations, scans, deletions, retailer approvals) writes to `audit_log` with a SHA-256 chain — each row hashes the previous row's hash plus its own contents. Tampering breaks the chain. Admin can verify the chain on demand from the dashboard.
-
-**Automatic data retention cleanup.** Customers inactive for `MAPLEPROOF_RETENTION_DAYS` (default 730 = 24 months) are auto-deleted. Audit logs are kept 5 years (long enough for compliance, short enough to limit exposure). Cleanup runs at startup and every 24 hours.
-
-**Persistent (DB-backed) rate limiting.** Survives restarts. Customer registrations limited to 5/day and 10/hour per IP.
-
-### 3. Retailer authentication
-
-New `/api/retailer/signup` endpoint. Self-signup creates a retailer in pending state — admin must approve before the API key works. The API key is shown **once** at signup; the server only stores its SHA-256 hash.
-
-The retailer scanner (`/retailer`) now has a **Settings** modal for pasting the API key (stored only in the browser's localStorage). Every scan sends `Authorization: Bearer mk_...` so audit logs know exactly which store performed each lookup.
-
-Backward-compatible: scans without a key still work but log as "ANONYMOUS".
-
-### 4. Rate limiting & fraud detection
-
-**Multi-ID-same-IP detection.** If 3+ distinct ID hashes register from the same IP in 7 days, the new account is auto-flagged with `fraud_hold`, and retailer scans show a big red `⚠ FRAUD HOLD · REFUSE SALE` banner.
-
-**Geographic anomaly detection.** Scan country differs from registration country → `GEO_ANOMALY` flag (informational, doesn't block).
-
-**Manual fraud flag.** Cashiers can flag any pass via the new "⚠ Flag as fraud" button on the retailer result modal — calls `/api/retailer/flag-fraud` and the next scan returns a fraud hold.
-
-### 5. OCR cross-check
-
-`/api/register` accepts an `ocrFrontText` field (browser-side OCR of the ID front). The server compares it against the AAMVA barcode data on the back (DOB year, expiry year, last name) and stores `ocr_match_status` (match/partial/mismatch/not_run). Mismatches are flagged on retailer scans as `OCR_MISMATCH`.
-
-> **Note:** `app.js` does not yet generate `ocrFrontText` — adding `tesseract.js` (~2 MB) is the missing piece. The server-side cross-check infrastructure is ready.
-
-### 6. Better cashier UI
-
-The retailer result modal is completely redesigned:
-
-- **Big GREEN/AMBER/RED banner** at the top — 32px text, gradient background, instant decision signal
-- **Twin photos side-by-side** — LIVE PHOTO vs ID PHOTO for visual comparison
-- **Decisive banner copy** — "✓ VERIFIED · 19+", "⚠ FRAUD HOLD · REFUSE SALE", "⛔ ID EXPIRED", etc.
-- **Flag-as-fraud button** beneath the result for cashier-initiated escalation
-- **All new flag types** described in plain language (FRAUD_HOLD, OCR_MISMATCH, GEO_ANOMALY)
-
-### 7. Marketing site upgrades
-
-Hero rewritten around privacy: **"Your government ID, encrypted. Verified once. Used everywhere."** The privacy-first story is now the headline, not a tag below the fold.
-
-New compliance badges section: PIPEDA Compliant · AES-256 Encryption · Canadian Hosting · Tamper-evident audit · AGCO Aware · Made in Canada.
-
-Footer rewritten with proper Product / Legal / Contact columns and a prominent retailer-disclaimer about $100,000 AGCO penalties remaining the retailer's responsibility.
-
-Nav now links to `/retailers`, `/faq`, `/privacy`, `/terms` instead of in-page anchors.
-
-### 8. Admin dashboard
-
-Now has tabs:
-
-- **Customers** — original users grid (search/delete)
-- **Retailers** — list, approve pending, disable active
-- **Audit log** — last 200 entries + "Verify integrity" button (walks the hash chain and reports tampering)
-- **Pending deletions** — review and execute customer deletion requests
-
-New stats: fraud holds, pending deletions, active retailers, pending retailers.
+It also changes how the pass works: **the ID photo is never stored.** Only the verified selfie and the face-match percentage are kept.
 
 ---
 
-## Environment variables for production
+## ⚠️ IMPORTANT: Trulioo is SIMULATED
 
-Set these in Render's dashboard (Environment tab):
+You have not signed a contract with Trulioo yet, so this build **does not actually call Trulioo's API.** The endpoint `/api/trulioo-verify` runs basic sanity checks (age, expiry, required fields) and then returns a **fake "verified" response** with a synthetic reference number like `TRL-SIM-A1B2C3D4`.
 
-```bash
-# REQUIRED for production
-MAPLEPROOF_ENCRYPTION_KEY=<base64-encoded 32 bytes>
-MAPLEPROOF_ADMIN_TOKEN=<long random string>
+Every simulated verification is honestly flagged:
+- The API response includes `"simulated": true` and `"datasource": "SIMULATED"`
+- The audit log records the action as `TRULIOO_VERIFY_SIMULATED` with the note `"MOCK — not a real Trulioo call"`
 
-# OPTIONAL (defaults shown)
-MAPLEPROOF_RETENTION_DAYS=730
-MAPLEPROOF_RETAIN_FULL_IDS=     # leave unset to discard full ID images (recommended)
+**When you sign with Trulioo:** the only file you change is `server.js` — replace the body of the `/api/trulioo-verify` handler with a real call to Trulioo's GlobalGateway "verify" API. The browser code, the database, and the rest of the flow stay exactly the same, because the request/response shape was kept deliberately simple.
+
+---
+
+## What changed in v10
+
+### 1. Worldwide ID support — manual entry, no barcode scanning
+
+The old flow scanned the PDF417 barcode on the back of Ontario driver's licenses. That only works for North American licenses — passports don't have PDF417 barcodes.
+
+v10 replaces barcode scanning with a **manual details form**:
+
+- **ID Type dropdown:** Passport, Driver's License, National ID Card, State/Provincial ID, Residence Permit
+- **Name fields:** First/Given name, Last/Family name
+- **Date of birth, ID/document number, expiry date**
+- **Country of issue dropdown** — 25 countries plus "Other"
+- **ID photo upload** — one clear photo showing the person's face
+
+All the PDF417/ZXing barcode-scanning code is gone. The `@zxing/library` CDN script was removed from `app.html`.
+
+### 2. The ID photo is never stored
+
+This is the big privacy change. In v10:
+
+- The uploaded ID photo stays **in the browser only**
+- It is used **once** — to run the face-match against the live selfie (face-api.js, browser-side)
+- After matching, it is **discarded.** It is never uploaded to the server, never written to the database
+- The server's `/api/register` endpoint doesn't even accept an ID photo field anymore
+
+What the server stores: the **verified selfie**, the **face-match score** (a number 0–1), the ID details (encrypted), and the Trulioo reference.
+
+### 3. Redesigned pass card
+
+The pass used to show twin photos (LIVE + ID side by side). Now it shows:
+
+- **One photo** — the verified selfie
+- **A large face-match percentage** with a colour-coded note (green ≥70% "strong", amber ≥55% "review", red <55% "low")
+- **A "✓ Trulioo Verified" badge**
+- **ID Type** in the metadata row (instead of jurisdiction)
+
+The downloadable PNG pass was updated to match.
+
+### 4. Trulioo verification step in the flow
+
+The customer flow is now:
+
+```
+Home  →  ID details (any country)  →  Liveness check  →  Trulioo verification  →  Pass
 ```
 
-To generate a key locally:
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+During the "saving" screen, the user sees a live progress animation:
+1. Connecting to Trulioo identity network…
+2. Verifying document authenticity…
+3. Cross-checking global watchlists…
+4. Verification complete ✓
+
+(Again — this is simulated. The animation is real; the Trulioo call behind it is not, yet.)
+
+The server **refuses to issue a pass** unless `truliooVerified` is true — so the verification step can't be skipped.
+
+### 5. Retailer scanner updated
+
+- The result modal shows **one photo** (the verified selfie), not twin photos
+- New flag: `NO_TRULIOO_VERIFICATION` — shown if a pass somehow lacks Trulioo verification
+- The old `OCR_MISMATCH` flag was removed (no barcode = no OCR cross-check)
+
+### 6. Database schema additions
+
+New columns on the `customers` table (auto-migrated on startup):
+
+| Column | Purpose |
+|---|---|
+| `id_type` | passport / drivers_license / national_id / state_id / residence_permit |
+| `id_country` | ISO country code of the issuing country |
+| `trulioo_verified` | 1 if identity verification passed |
+| `trulioo_reference` | the reference returned by `/api/trulioo-verify` |
+
+The old `id_face_enc`, `id_front_enc`, `id_back_enc` columns still exist in the schema but are **always written as NULL** now — ID images are never stored.
+
+---
+
+## Files changed from v9
+
+```
+app.html      ← ID type dropdown + manual entry form + single-photo pass + Trulioo progress UI
+app.js        ← FULL REWRITE: no barcode scanning, manual form, Trulioo call, selfie-only pass
+server.js     ← new /api/trulioo-verify endpoint, rewritten /api/register, schema +4 columns,
+                pass lookup no longer returns ID photo, NO_TRULIOO_VERIFICATION flag
+styles.css    ← + form styles, Trulioo progress animation, single-photo pass card
+retailer.html ← twin photos → single "VERIFIED SELFIE"
+retailer.js   ← removed ID-photo handling, updated flag descriptions
+admin.js      ← (unchanged — still works)
 ```
 
-To generate an admin token:
-```bash
-node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
-```
+Unchanged: `liveness.js`, `index.html`, all legal pages (`privacy.html`, `terms.html`, `faq.html`, `retailers.html`, `delete.html`), `legal-styles.css`, logos, `package.json`.
 
-⚠️ **If you change `MAPLEPROOF_ENCRYPTION_KEY`, all existing encrypted data becomes unreadable.** First-time setup: deploy without these env vars to let the server generate them and print them in the logs, then copy them into Render's Environment tab and redeploy.
+> **Note:** the legal pages still describe the Ontario-licence / PDF417 flow in places. They should be updated to mention worldwide IDs and Trulioo before a real launch — and your lawyer should review the Trulioo data-sharing language. This wasn't done automatically because legal copy needs human review.
 
 ---
 
 ## Deploy
 
-```bash
-cd C:\Users\gajan\Downloads\files
+This is a **new database schema**, so you need a fresh database (same as the v9→ jump).
 
-# Replace your old files with v9
-# (optionally delete: trulioo files, old README — they're not in v9)
+1. Replace all files in your GitHub repo with these v10 files
+2. Commit and push (or upload via GitHub web)
+3. On Render, the schema auto-migrates on startup — but because v9 data has a different shape, do a clean start:
+   - Render dashboard → your service → **Manual Deploy → Clear build cache & deploy**
+   - Or use the `RESET_DB=1` environment-variable trick from before, then remove it
 
-git add -A
-git commit -m "v9: PIPEDA compliance, retailer auth, audit log, privacy minimization"
-git push
-```
-
-Render auto-deploys on push. Build command: `npm install` · Start command: `node server.js`.
-
-**Important Render setting:** upgrade from free tier to a paid Starter plan ($7/month) for persistent disk. On free tier, the database resets on every redeploy (~monthly), which makes the audit log unreliable.
+4. Environment variables stay the same as v9:
+   - `MAPLEPROOF_ENCRYPTION_KEY`
+   - `MAPLEPROOF_ADMIN_TOKEN`
+   - `>=18 <24` is already pinned in `package.json` engines (keeps Render off Node 26)
 
 ---
 
 ## Testing checklist after deploy
 
-- [ ] Visit `/` — verify privacy-first hero, compliance badges, footer with legal links
-- [ ] Visit `/privacy`, `/terms`, `/faq`, `/retailers`, `/delete` — all render
-- [ ] `/app` — try to process ID without ticking consent → button disabled, status text changes
-- [ ] `/app` — full registration with consent ticked → succeeds, returns barcode
-- [ ] `/retailer` — open Settings, paste API key from `/retailers` signup → save
-- [ ] Scan a real pass without key → shows in admin audit log as `ANONYMOUS`
-- [ ] Scan with key → shows in audit log as `retailer:r_...`
-- [ ] Click "Flag as fraud" → next scan of same pass shows red FRAUD HOLD banner
-- [ ] `/admin` → sign in with `MAPLEPROOF_ADMIN_TOKEN` value
-- [ ] Audit log tab → "Verify integrity" returns ✓
-- [ ] Retailers tab → pending retailer signups visible, can approve
-- [ ] `/delete` → submit deletion request → appears in admin Deletions tab
-- [ ] Execute the deletion → customer gone, audit logged
+- [ ] `/app` → home → "Get my pass"
+- [ ] ID type dropdown shows all 5 options
+- [ ] Try to continue with the form half-filled → button stays disabled, status text guides you
+- [ ] Fill everything, tick consent → "Continue to verification" enables
+- [ ] Liveness check runs as before
+- [ ] "Saving" screen shows the 4-step Trulioo progress animation
+- [ ] Pass appears with: one selfie photo, a face-match %, "✓ Trulioo Verified" badge, ID Type in metadata
+- [ ] Download pass → PNG has the single selfie + match score
+- [ ] `/retailer` → scan the pass → result shows ONE photo (verified selfie), not two
+- [ ] `/admin` → Customers tab → users still list correctly
+- [ ] `/admin` → Audit log → you can see `TRULIOO_VERIFY_SIMULATED` entries
+- [ ] Verify a passport (no expiry barcode needed — it's all manual now)
 
 ---
 
-## What's still pending (for you and your lawyer)
+## What's still pending
 
-1. **Lawyer review of `/privacy` and `/terms`** — the templates are PIPEDA-aligned but get them reviewed
-2. **Update placeholder emails** — `hello@mapleproof.example` and `privacy@mapleproof.example` need to be real
-3. **Add tesseract.js** for browser-side OCR (needed for OCR cross-check to actually run)
-4. **Email notifications** — server writes to `deletion_requests` and creates pending retailers but doesn't send email (you'd add SendGrid/Resend integration here)
-5. **Real-world fraud thresholds** — current `MULTI_ID_SAME_IP` threshold (3 in 7 days) is conservative; tune based on real traffic
-6. **Get business insurance** before any retailer pilot — general liability + cyber liability
-7. **Register with the OPC** as an organization handling personal info (free, paperwork only)
-8. **Move to paid Render** with persistent disk — the audit log is meaningless if the DB resets monthly
-
----
-
-## File inventory
-
-```
-mapleproof-v9/
-├── server.js              ← Heavy rebuild: env-var keys, audit log, retailers, fraud, retention, OCR check
-├── app.js                 ← Sends consent + version, no longer sends full ID images
-├── app.html               ← Consent checkbox + topbar legal links
-├── liveness.js            ← Unchanged from v8 (tight face crop with circular mask)
-├── retailer.html          ← New big banner UI + twin photos + flag-fraud + settings modal
-├── retailer.js            ← Bearer auth on every scan, flag-fraud, settings, new flag descriptions
-├── admin.html             ← Tabs: Customers / Retailers / Audit / Deletions
-├── admin.js               ← New loaders + verify-integrity + retailer approve/disable
-├── index.html             ← Privacy-first hero, compliance badges, legal-link footer
-├── styles.css             ← + consent row, big banner, twin photos, settings card, etc.
-├── legal-styles.css       ← NEW shared style for /privacy /terms /faq /retailers /delete
-├── privacy.html           ← NEW PIPEDA Privacy Policy
-├── terms.html             ← NEW Terms of Service
-├── faq.html               ← NEW Honest FAQ
-├── retailers.html         ← NEW Retailer signup page
-├── delete.html            ← NEW Customer self-service deletion
-├── package.json           ← unchanged
-├── .gitignore             ← unchanged
-└── (logos + favicons)     ← unchanged
-```
+1. **Sign with Trulioo**, then swap the `/api/trulioo-verify` handler body for a real API call
+2. **Update legal pages** — `privacy.html` and `faq.html` still reference Ontario licences / PDF417; add worldwide-ID and Trulioo data-sharing language, and get a lawyer to review
+3. **Age tiers are still Ontario-based** (19+/25+) — if you verify IDs from countries with an 18+ drinking age, the tier logic in `server.js` (`ageBadge()`) needs per-country rules
+4. **ID-number uniqueness across countries** — two different countries could theoretically issue the same document number. If that matters, include the country code in the `id_hash` input
+5. Everything from the v9 pending list still applies (paid Render tier for persistent disk, real contact emails, business insurance, etc.)
