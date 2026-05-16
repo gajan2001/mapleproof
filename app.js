@@ -134,18 +134,19 @@ const ID_TYPE_KEYWORDS = {
 // ── STATE ──────────────────────────────────────────────────────────
 const state = {
   faceImageData:  '',           // verified live selfie (from liveness)
-  idPhotoImage:   '',           // uploaded ID photo — used for matching, NEVER sent to server
+  idPhotoImage:   '',           // unused in Trulioo flow (kept for compatibility)
   faceMatchScore: null,
   liveDescriptor: null,
   livenessChallenges: null,
   token:          '',
-  // ID details collected from the manual form
+  // Trulioo owns ID capture & verification; these stay mostly empty.
   idDetails: {
     idType: '', firstName: '', lastName: '', dob: '',
-    idNumber: '', expiry: '', country: ''
+    idNumber: '', expiry: '', country: 'CA'
   },
+  truliooVerified:  false,
+  truliooSimulated: false,
   truliooReference: null,
-  ocrConfidence:  null,
   serverPublicRecord: null
 };
 
@@ -279,362 +280,166 @@ async function compareFaces(selfieDataUrl, idPhotoDataUrl) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-//  ID PARSING HELPERS (browser-side OCR via Tesseract.js)
+//  TRULIOO EMBEDID — identity & document verification
+//  ─────────────────────────────────────────────────────────────────
+//  LIVE  (server has Trulioo keys): the official EmbedID widget runs
+//        here. Trulioo captures the ID document, runs its own checks
+//        and returns an experience transaction id, which we confirm
+//        server-side via /api/trulioo/result.
+//  SIM   (no keys): a branded simulated panel runs the same 4 steps so
+//        the trial works end-to-end. Flips to LIVE with zero code
+//        changes the moment the env vars are set.
 // ─────────────────────────────────────────────────────────────────
+let truliooCfg = null;
 
-// Parse many date formats → YYYY-MM-DD (or null)
-function normalizeDate(raw) {
-  if (!raw) return null;
-  raw = raw.trim().replace(/[.\s]/g, '/').replace(/-/g, '/');
-  const MON = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
-  let m;
-  // YYYY/MM/DD
-  if ((m = raw.match(/\b(\d{4})\/(\d{1,2})\/(\d{1,2})\b/))) {
-    return `${m[1]}-${String(+m[2]).padStart(2,'0')}-${String(+m[3]).padStart(2,'0')}`;
-  }
-  // DD/MM/YYYY  (also handles MM/DD/YYYY ambiguity → prefer DD/MM if >12)
-  if ((m = raw.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/))) {
-    let d = +m[1], mo = +m[2];
-    if (d > 12 && mo <= 12) { /* keep */ }
-    else if (mo > 12 && d <= 12) { [d, mo] = [mo, d]; }
-    return `${m[3]}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-  }
-  // DD MON YYYY
-  if ((m = raw.match(/\b(\d{1,2})\/?([a-zA-Z]{3})[a-zA-Z]*\/?(\d{4})\b/))) {
-    const mo = MON[m[2].toLowerCase()];
-    if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${String(+m[1]).padStart(2,'0')}`;
-  }
-  // YYMMDD (MRZ)
-  if ((m = raw.match(/\b(\d{2})(\d{2})(\d{2})\b/))) {
-    const yy = +m[1]; const year = yy < 30 ? 2000 + yy : 1900 + yy;
-    if (+m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31)
-      return `${year}-${m[2]}-${m[3]}`;
-  }
-  return null;
-}
-
-// Pull all plausible dates out of OCR text, in order
-function findDates(text) {
-  const out = [];
-  const re = /\b(\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{1,2}[\/\-.\s][A-Za-z]{3,9}[\/\-.\s]\d{4}|\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{4})\b/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const n = normalizeDate(m[1]);
-    if (n) out.push(n);
-  }
-  return out;
-}
-
-// Parse passport MRZ (TD3, 2 lines of 44). Returns {lastName,firstName,docNumber,dob,expiry,country} or null
-function parseMRZ(text) {
-  const lines = text.toUpperCase().split(/\n/).map(l => l.replace(/\s/g, ''));
-  const mrz = lines.filter(l => /^[A-Z0-9<]{30,}$/.test(l) && l.includes('<'));
-  if (mrz.length < 2) return null;
-  const l1 = mrz[mrz.length - 2], l2 = mrz[mrz.length - 1];
+async function loadTruliooConfig() {
+  if (truliooCfg) return truliooCfg;
   try {
-    const country = (l1.match(/^P[<A-Z]([A-Z]{3})/) || [])[1] || 'CAN';
-    const names = l1.slice(5).split('<<');
-    const lastName  = (names[0] || '').replace(/</g, ' ').trim();
-    const firstName = (names[1] || '').replace(/</g, ' ').trim();
-    const docNumber = l2.slice(0, 9).replace(/</g, '');
-    const dob    = normalizeDate(l2.slice(13, 19));
-    const expiry = normalizeDate(l2.slice(21, 27));
-    if (lastName && (dob || expiry))
-      return { lastName, firstName, docNumber, dob, expiry, country: 'CA' };
-  } catch (_) {}
-  return null;
+    const r = await fetch('/api/trulioo/config');
+    truliooCfg = await r.json();
+  } catch (_) {
+    truliooCfg = { live: false, publicKey: null };
+  }
+  return truliooCfg;
 }
 
-// Heuristic field extraction from OCR text for non-passport IDs
-function extractFields(text, idType) {
-  const up = text.toUpperCase();
-  const res = { firstName:'', lastName:'', dob:'', expiry:'', idNumber:'' };
+function loadScriptOnce(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const s = document.createElement('script');
+    s.src = src; s.async = true;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Failed to load ' + src));
+    document.head.appendChild(s);
+  });
+}
 
-  if (idType === 'passport_ca') {
-    const mrz = parseMRZ(text);
-    if (mrz) { Object.assign(res, mrz); }
-  }
-
-  // Dates: assume earliest plausible = DOB, latest = expiry
-  const dates = findDates(text)
-    .filter(d => { const y = +d.slice(0,4); return y >= 1900 && y <= 2100; })
-    .sort();
-  if (dates.length && !res.dob)    res.dob = dates[0];
-  if (dates.length > 1 && !res.expiry) res.expiry = dates[dates.length - 1];
-
-  // Document number — labelled patterns first
-  if (!res.idNumber) {
-    const lab = up.match(/(?:NO|NUMBER|NUMÉRO|N°|DL|#)[:.\s]{0,3}([A-Z0-9\-]{5,20})/);
-    if (lab) res.idNumber = lab[1];
-    else {
-      const cand = up.match(/\b([A-Z0-9]{5,9}[-\s]?\d{4,10})\b/) || up.match(/\b(\d{8,15})\b/);
-      if (cand) res.idNumber = cand[1].replace(/\s/g,'');
+// Confirm a Trulioo result with our server, then advance the flow.
+async function confirmTruliooResult(transactionId) {
+  const statusEl = document.getElementById('trulioo-status-text');
+  try {
+    const resp = await fetch('/api/trulioo/result', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transactionId,
+        idType:    state.idDetails.idType    || undefined,
+        firstName: state.idDetails.firstName || undefined,
+        lastName:  state.idDetails.lastName  || undefined,
+        dob:       state.idDetails.dob       || undefined,
+        expiry:    state.idDetails.expiry    || undefined
+      })
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok || !data.verified) {
+      if (statusEl) statusEl.textContent =
+        (data && data.error) || 'Identity verification did not pass. Please try again.';
+      document.getElementById('trulioo-retry-row')?.removeAttribute('hidden');
+      return;
     }
+    state.truliooVerified  = true;
+    state.truliooReference = data.reference || transactionId || null;
+    state.truliooSimulated = !!data.simulated;
+    if (statusEl) statusEl.textContent = '✓ Identity verified. Continuing…';
+    setTimeout(() => { showPhase(2); }, 700);
+  } catch (err) {
+    if (statusEl) statusEl.textContent = 'Could not reach the verification service. Please retry.';
+    document.getElementById('trulioo-retry-row')?.removeAttribute('hidden');
   }
-
-  // Name — look for "LN, FN" or labelled lines (best-effort; user confirms)
-  if (!res.lastName) {
-    const ln = text.match(/(?:Surname|Last Name|Nom)[:\s]+([A-Z][A-Za-z'\-]+)/i);
-    const fn = text.match(/(?:Given Name|First Name|Pr[eé]nom)[:\s]+([A-Z][A-Za-z'\-]+)/i);
-    if (ln) res.lastName  = ln[1];
-    if (fn) res.firstName = fn[1];
-  }
-  return res;
 }
 
-// Decide whether the upload is plausibly a photo ID document.
-//
-// Browser OCR is unreliable on real IDs (holograms, small fonts, glare,
-// angles), so we DO NOT hard-reject based on keyword matching. We only
-// reject things that are clearly NOT a photo-ID document (a blank image,
-// a plain selfie, a screenshot of text, a random object). Keyword matches
-// only raise/lower a confidence flag — the review step lets the user fix
-// anything OCR misread.
-function validateIsId(text, idType, hasFace) {
-  const up    = (text || '').toUpperCase();
-  const clean = up.replace(/[^A-Z0-9]/g, '');
-  const textLen = clean.length;
-  const hasDate = findDates(text || '').length > 0;
-
-  // Fuzzy keyword presence (tolerate OCR noise / punctuation)
-  const kws = ID_TYPE_KEYWORDS[idType] || [];
-  let hits = 0;
-  for (const k of kws) {
-    const kk = k.replace(/[^A-Z0-9]/g, '');
-    if (kk && (up.includes(k) || clean.includes(kk))) hits++;
+// LIVE: mount the real Trulioo EmbedID client
+async function startTruliooLive(cfg) {
+  const mount   = document.getElementById('trulioo-embedid');
+  const simBox  = document.getElementById('trulioo-sim');
+  const statusEl= document.getElementById('trulioo-status-text');
+  if (simBox) simBox.hidden = true;
+  if (mount)  mount.hidden = false;
+  if (statusEl) statusEl.textContent = 'Loading secure Trulioo verification…';
+  try {
+    await loadScriptOnce(cfg.sdkUrl || 'https://js.trulioo.com/latest/main.js');
+    if (typeof TruliooClient === 'undefined')
+      throw new Error('Trulioo client unavailable');
+    if (statusEl) statusEl.textContent =
+      'Follow the Trulioo steps to verify your identity.';
+    // The client renders the experience into the page and calls
+    // handleResponse with the result + experienceTransactionId.
+    /* global TruliooClient */
+    new TruliooClient({
+      publicKey: cfg.publicKey,
+      handleResponse: (evt) => {
+        const tx = evt && (evt.experienceTransactionId ||
+                           evt.ExperienceTransactionId || evt.transactionId);
+        if (tx) {
+          if (statusEl) statusEl.textContent = 'Confirming your verification…';
+          confirmTruliooResult(tx);
+        }
+      }
+    });
+  } catch (err) {
+    if (statusEl) statusEl.textContent =
+      'Could not load Trulioo verification. Please refresh and try again.';
+    console.error('[trulioo] live init failed:', err);
   }
-  // Generic government / document hints (loose — survives OCR errors)
-  const govHint = /CAN|ONT|GOUV|GOVERN|RESID|CITIZ|FORCE|STATUS|PERMIS|LICEN|LICmanage|PASSP|CARTE|CARD|BIRTH|SEX|EXP/.test(clean);
+}
 
-  // ── Hard rejections: only obvious non-documents ──
-  // Nothing at all: no face, no dates, almost no text → blank/object/garbage
-  if (!hasFace && !hasDate && textLen < 30 && !govHint)
-    return { ok:false, reason:'not_a_document' };
-  // A face but no document signals whatsoever → just a selfie
-  if (hasFace && !hasDate && textLen < 18 && !govHint)
-    return { ok:false, reason:'selfie_not_id' };
-  // No face and no document signals → not a photo ID
-  if (!hasFace && !hasDate && !govHint)
-    return { ok:false, reason:'no_face' };
+// SIM: branded simulated EmbedID experience (no keys present)
+async function startTruliooSim() {
+  const mount  = document.getElementById('trulioo-embedid');
+  const simBox = document.getElementById('trulioo-sim');
+  const statusEl = document.getElementById('trulioo-status-text');
+  if (mount)  mount.hidden = true;
+  if (simBox) simBox.hidden = false;
+  if (statusEl) statusEl.textContent = 'Running Trulioo identity verification…';
 
-  // Otherwise accept. The review step handles correctness.
-  const strong = (hits >= 1) && (govHint || hasDate) && hasFace;
-  return { ok:true, confidence: strong ? 'high' : 'low' };
+  const steps = [1,2,3,4].map(n => document.getElementById('tsim-step-'+n));
+  steps.forEach(s => s && s.classList.remove('active','done'));
+  for (let i = 0; i < 3; i++) {
+    steps[i]?.classList.add('active');
+    await new Promise(r => setTimeout(r, 850));
+    steps[i]?.classList.remove('active');
+    steps[i]?.classList.add('done');
+  }
+  steps[3]?.classList.add('active');
+  await confirmTruliooResult(null);   // server returns simulated success
+  steps[3]?.classList.add('done');
+}
+
+async function runTruliooPhase() {
+  const cfg = await loadTruliooConfig();
+  const badge = document.getElementById('trulioo-mode-badge');
+  if (badge) {
+    badge.textContent = cfg.live ? 'Secured by Trulioo' : 'Trulioo · Simulation (trial)';
+    badge.classList.toggle('sim', !cfg.live);
+  }
+  document.getElementById('trulioo-retry-row')?.setAttribute('hidden','');
+  if (cfg.live && cfg.publicKey) return startTruliooLive(cfg);
+  return startTruliooSim();
 }
 
 // ─────────────────────────────────────────────────────────────────
-//  PHASE 1 — UPLOAD ID → OCR EXTRACT → REVIEW
+//  PHASE 1 — TRULIOO IDENTITY VERIFICATION
 // ─────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  const startBtn   = document.getElementById('start-btn');
-  const backBtn2   = document.getElementById('back-home-btn-2');
-  if (startBtn) startBtn.addEventListener('click', () => showPhase(1));
+  const startBtn = document.getElementById('start-btn');
+  const backBtn2 = document.getElementById('back-home-btn-2');
+  if (startBtn) startBtn.addEventListener('click', () => { showPhase(1); runTruliooPhase(); });
   if (backBtn2) backBtn2.addEventListener('click', () => showPhase(0));
+  document.getElementById('trulioo-retry-btn')?.addEventListener('click', () => runTruliooPhase());
 
-  const idTypeSelect = document.getElementById('id-type-select');
-  const idPhotoInput = document.getElementById('id-photo-input');
-  const idUploadLbl  = document.getElementById('id-upload-label');
-  const idPhotoThumb = document.getElementById('id-photo-thumb');
-  const uploadStatus = document.getElementById('upload-status-text');
-  const processBtn   = document.getElementById('upload-process-btn');
-  const consentCheck = document.getElementById('consent-check');
-  const consentRow   = document.getElementById('consent-row');
-  const reviewBlock  = document.getElementById('review-block');
-  const reviewBanner = document.getElementById('review-banner');
-  const ocrProgress  = document.getElementById('ocr-progress');
-  const firstName    = document.getElementById('id-first-name');
-  const lastName     = document.getElementById('id-last-name');
-  const dobInput     = document.getElementById('id-dob');
-  const idNumber     = document.getElementById('id-number');
-  const expiryInput  = document.getElementById('id-expiry');
-  const countrySel   = document.getElementById('id-country');
-
-  let scanned = false;
-
-  function setStatus(msg, tone) {
-    if (!uploadStatus) return;
-    uploadStatus.textContent = msg;
-    uploadStatus.parentElement.dataset.tone = tone || '';
-  }
-
-  // Enable the upload control only once an ID type is chosen
-  idTypeSelect?.addEventListener('change', () => {
-    const on = !!idTypeSelect.value;
-    idPhotoInput.disabled = !on;
-    idUploadLbl?.classList.toggle('disabled', !on);
-    if (on && !scanned) setStatus('Upload a clear photo of your ' + (ID_TYPE_LABELS[idTypeSelect.value]||'ID') + '.');
-    else if (!on) setStatus('Select your ID type to begin.');
-  });
-
-  function reviewComplete() {
-    return !!(firstName.value.trim() && lastName.value.trim() &&
-              dobInput.value && idNumber.value.trim() && expiryInput.value);
-  }
-  function refreshBtn() {
-    const ok = scanned && reviewComplete() && consentCheck && consentCheck.checked;
-    if (processBtn) processBtn.disabled = !ok;
-  }
-  [firstName,lastName,dobInput,idNumber,expiryInput].forEach(el=>{
-    el?.addEventListener('input', refreshBtn);
-    el?.addEventListener('change', refreshBtn);
-  });
-  consentCheck?.addEventListener('change', refreshBtn);
-
-  function ocrStep(n, cls) {
-    const s = document.getElementById('ocr-step-' + n);
-    if (s) { s.classList.remove('active','done'); s.classList.add(cls); }
-  }
-
-  // Main: upload → validate → OCR → extract → review
-  idPhotoInput?.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    // Reject anything that is not an image up-front
-    if (!file.type || !file.type.startsWith('image/')) {
-      setStatus('That is not an image. Please upload a photo of your ID only.', 'bad');
-      idPhotoInput.value = ''; return;
-    }
-    if (file.size > 25 * 1024 * 1024) {
-      setStatus('That image is too large (max 25 MB).', 'bad'); idPhotoInput.value=''; return;
-    }
-
-    const idType = idTypeSelect.value;
-    if (!idType) { setStatus('Select your ID type first.', 'bad'); idPhotoInput.value=''; return; }
-
-    scanned = false;
-    if (reviewBlock) reviewBlock.hidden = true;
-    if (consentRow)  consentRow.hidden  = true;
-    refreshBtn();
-
-    const dataUrl = await resizeImageFile(file, 1700, 0.9);
-    state.idPhotoImage = dataUrl;
-    if (idPhotoThumb) {
-      idPhotoThumb.classList.add('has-image');
-      idPhotoThumb.style.backgroundImage = `url('${dataUrl}')`;
-      idPhotoThumb.parentElement?.classList.add('has-image');
-    }
-
-    if (ocrProgress) ocrProgress.hidden = false;
-    ['1','2','3','4'].forEach(n=>{const s=document.getElementById('ocr-step-'+n);s&&s.classList.remove('active','done');});
-
-    try {
-      // Step 1 — basic image sanity
-      ocrStep(1,'active');
-      setStatus('Scanning your ID…');
-      await new Promise(r=>setTimeout(r,300));
-
-      // Step 2 — look for the ID's face photo (used as a soft signal)
-      ocrStep(1,'done'); ocrStep(2,'active');
-      await loadFaceApiModels();
-      let hasFace = false;
-      try {
-        if (faceApiReady) {
-          const img = await dataUrlToImage(dataUrl);
-          // ID portraits are small & stylised — try a couple of settings
-          for (const opt of [
-            { inputSize: 512, scoreThreshold: 0.25 },
-            { inputSize: 320, scoreThreshold: 0.20 }
-          ]) {
-            const det = await faceapi.detectSingleFace(img,
-              new faceapi.TinyFaceDetectorOptions(opt));
-            if (det) { hasFace = true; break; }
-          }
-        } else { hasFace = true; } // models unavailable → don't block
-      } catch (_) { hasFace = true; }
-
-      // Step 3 — OCR the text
-      ocrStep(2,'done'); ocrStep(3,'active');
-      setStatus('Reading the text on your ID…');
-      let text = '';
-      try {
-        if (window.Tesseract) {
-          const { data } = await Tesseract.recognize(dataUrl, 'eng');
-          text = (data && data.text) || '';
-        }
-      } catch (err) { console.warn('[ocr] failed:', err); }
-
-      // Validate it really is the selected ID
-      const verdict = validateIsId(text, idType, hasFace);
-      if (!verdict.ok) {
-        if (ocrProgress) ocrProgress.hidden = true;
-        const msgs = {
-          no_face:        'This doesn\'t look like a photo ID. Please upload a clear photo of your ' + ID_TYPE_LABELS[idType] + ' — and nothing else.',
-          not_a_document: 'We couldn\'t detect an ID document in this image. Please upload a clear, well-lit photo of your ' + ID_TYPE_LABELS[idType] + '.',
-          selfie_not_id:  'That looks like a selfie, not an ID. Please upload a photo of your ' + ID_TYPE_LABELS[idType] + ' (you\'ll take a selfie later).'
-        };
-        setStatus(msgs[verdict.reason] || 'This does not appear to be a valid ID. Please try again.', 'bad');
-        state.idPhotoImage = '';
-        if (idPhotoThumb){idPhotoThumb.classList.remove('has-image');idPhotoThumb.style.backgroundImage='';}
-        idPhotoInput.value = '';
-        return;
+  // Re-run the Trulioo step whenever phase 1 becomes active fresh
+  const p1 = document.getElementById('phase-scan');
+  if (p1) {
+    const obs = new MutationObserver(() => {
+      if (p1.classList.contains('active') && !state.truliooVerified) {
+        const r = document.getElementById('trulioo-retry-row');
+        if (r && !r.hasAttribute('hidden')) return;
       }
+    });
+    obs.observe(p1, { attributes: true, attributeFilter: ['class'] });
+  }
 
-      // Step 4 — extract fields
-      const f = extractFields(text, idType);
-      if (firstName)  firstName.value  = f.firstName || '';
-      if (lastName)   lastName.value   = f.lastName  || '';
-      if (dobInput)   dobInput.value   = f.dob       || '';
-      if (idNumber)   idNumber.value   = f.idNumber  || '';
-      if (expiryInput)expiryInput.value= f.expiry    || '';
-      if (countrySel) countrySel.value = 'CA';
-
-      ocrStep(3,'done'); ocrStep(4,'active'); ocrStep(4,'done');
-      await new Promise(r=>setTimeout(r,250));
-      if (ocrProgress) ocrProgress.hidden = true;
-
-      scanned = true;
-      state.ocrConfidence = verdict.confidence;
-      if (reviewBlock) reviewBlock.hidden = false;
-      if (consentRow)  consentRow.hidden  = false;
-
-      const missing = !f.dob || !f.expiry || !f.lastName;
-      if (reviewBanner) {
-        reviewBanner.textContent = missing
-          ? 'We could not read everything clearly. Please fill in or correct the highlighted details from your ID.'
-          : 'We read these details from your ID. Please check them and correct anything that is wrong.';
-        reviewBanner.classList.toggle('warn', missing);
-      }
-      setStatus(missing
-        ? 'Almost there — complete the details below to continue.'
-        : '✓ ID read successfully. Review the details below.');
-      refreshBtn();
-    } catch (err) {
-      console.error('[scan] error:', err);
-      if (ocrProgress) ocrProgress.hidden = true;
-      setStatus('Something went wrong reading your ID. Please try another photo.', 'bad');
-    }
-  });
-
-  // Continue → final validation → liveness
-  processBtn?.addEventListener('click', () => {
-    if (!scanned || !reviewComplete()) return;
-
-    const age = calculateAge(dobInput.value);
-    if (age !== null && age < 18) {
-      setStatus(`This ID shows an age of ${age} — under the minimum age for verification.`, 'bad');
-      return;
-    }
-    const exp = new Date(`${expiryInput.value}T00:00:00`);
-    if (!Number.isNaN(exp.getTime()) && exp.getTime() < Date.now()) {
-      setStatus('This ID is expired. Please use a valid, unexpired ID.', 'bad');
-      return;
-    }
-
-    state.idDetails = {
-      idType:    idTypeSelect.value,
-      firstName: firstName.value.trim(),
-      lastName:  lastName.value.trim(),
-      dob:       dobInput.value,
-      idNumber:  idNumber.value.trim(),
-      expiry:    expiryInput.value,
-      country:   'CA'
-    };
-    setStatus('✓ Details confirmed. Continuing to the liveness check…');
-    setTimeout(() => showPhase(2), 450);
-  });
-
-  // Pre-load face models in the background
+  // Pre-load face models in the background (used by the liveness step)
   loadFaceApiModels();
 });
 
@@ -765,69 +570,10 @@ document.getElementById('retry-liveness-btn')?.addEventListener('click', () => s
 })();
 
 // ─────────────────────────────────────────────────────────────────
-//  TRULIOO VERIFICATION (SIMULATED)
-//  ────────────────────────────────────────────────────────────────
-//  This calls our own /api/trulioo-verify endpoint, which currently
-//  FAKES a successful Trulioo identity-verification response. When a
-//  real Trulioo contract is signed, the server endpoint is swapped to
-//  call Trulioo's GlobalGateway API — the browser code stays the same.
+//  (Trulioo verification now happens in Phase 1 via EmbedID — see
+//   runTruliooPhase / confirmTruliooResult above. By the time we reach
+//   the pass step, state.truliooVerified is already true.)
 // ─────────────────────────────────────────────────────────────────
-async function runTruliooVerification() {
-  const progress = document.getElementById('trulioo-progress');
-  const steps = [
-    document.getElementById('trulioo-step-1'),
-    document.getElementById('trulioo-step-2'),
-    document.getElementById('trulioo-step-3'),
-    document.getElementById('trulioo-step-4')
-  ];
-  if (progress) progress.hidden = false;
-  steps.forEach(s => s && s.classList.remove('active', 'done'));
-
-  // Animate the first 3 steps visually while the request runs
-  const animate = (async () => {
-    for (let i = 0; i < 3; i++) {
-      steps[i]?.classList.add('active');
-      await new Promise(r => setTimeout(r, 700));
-      steps[i]?.classList.remove('active');
-      steps[i]?.classList.add('done');
-    }
-  })();
-
-  let result;
-  try {
-    const resp = await fetch('/api/trulioo-verify', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        idType:    state.idDetails.idType,
-        firstName: state.idDetails.firstName,
-        lastName:  state.idDetails.lastName,
-        dob:       state.idDetails.dob,
-        idNumber:  state.idDetails.idNumber,
-        expiry:    state.idDetails.expiry,
-        country:   state.idDetails.country
-      })
-    });
-    result = await resp.json();
-  } catch (err) {
-    console.error('[trulioo] network error:', err);
-    result = { ok: false, error: 'Could not reach the verification service.' };
-  }
-
-  await animate;
-
-  if (!result.ok || !result.verified) {
-    if (progress) progress.hidden = true;
-    throw new Error(result.error || 'Identity verification did not pass. Please check your details.');
-  }
-
-  // Mark final step done
-  steps[3]?.classList.add('active', 'done');
-  state.truliooReference = result.reference || null;
-  await new Promise(r => setTimeout(r, 500));
-  if (progress) progress.hidden = true;
-  return result;
-}
 
 // ─────────────────────────────────────────────────────────────────
 //  PHASE 3 — verify with Trulioo → POST to server → render pass
@@ -875,14 +621,14 @@ async function saveAndGeneratePass() {
     }
     state.faceMatchScore = matchScore;
 
-    // ── 3) TRULIOO IDENTITY VERIFICATION (simulated) ──
-    if (savingMsg) savingMsg.textContent = 'Verifying your identity with Trulioo…';
-    await runTruliooVerification();   // throws if it doesn't pass
+    // ── 3) Trulioo identity verification already completed in Phase 1 ──
+    if (!state.truliooVerified) {
+      throw new Error('Identity verification was not completed. Please start again.');
+    }
 
     // ── 4) Submit to server ──
-    //     We send: ID details, the verified selfie, match score, Trulioo
-    //     reference. We do NOT send the ID photo — face matching already
-    //     happened in-browser, and the ID photo is never stored.
+    //     We send the verified selfie + the Trulioo reference. The ID
+    //     document/data lives with Trulioo and is never stored here.
     if (savingMsg) savingMsg.textContent = 'Saving your pass…';
 
     const consentEl = document.getElementById('consent-check');
@@ -894,14 +640,8 @@ async function saveAndGeneratePass() {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        idType:        state.idDetails.idType,
-        firstName:     state.idDetails.firstName,
-        lastName:      state.idDetails.lastName,
-        name:          `${state.idDetails.firstName} ${state.idDetails.lastName}`.trim(),
-        dob:           state.idDetails.dob,
-        idNumber:      state.idDetails.idNumber,
-        expiry:        state.idDetails.expiry,
-        country:       state.idDetails.country,
+        idType:        state.idDetails.idType || undefined,
+        country:       'CA',
         faceImageData: croppedLiveFace,         // verified selfie ONLY
         faceMatchScore: matchScore,
         livenessVerified:   !!state.liveDescriptor,
@@ -936,7 +676,8 @@ async function saveAndGeneratePass() {
     document.getElementById('pass-face-photo').src = croppedLiveFace;
     document.getElementById('pass-status-val').textContent  = `REGISTERED · ${pub.ageBadge}`;
     document.getElementById('pass-idtype-val').textContent  =
-      ID_TYPE_LABELS[state.idDetails.idType] || 'ID';
+      (ID_TYPE_LABELS[state.idDetails.idType]) ||
+      (state.truliooSimulated ? 'Trulioo (simulated)' : 'Trulioo Verified');
 
     // Photo-match indicator
     const matchBig  = document.getElementById('pass-match-big');
@@ -1183,48 +924,31 @@ document.getElementById('restart-btn').addEventListener('click', () => {
   state.liveDescriptor     = null;
   state.livenessChallenges = null;
   state.token              = '';
+  state.truliooVerified    = false;
+  state.truliooSimulated   = false;
   state.truliooReference   = null;
-  state.ocrConfidence      = null;
   state.serverPublicRecord = null;
   state.idDetails = {
     idType: '', firstName: '', lastName: '', dob: '',
-    idNumber: '', expiry: '', country: ''
+    idNumber: '', expiry: '', country: 'CA'
   };
 
-  // Reset form
-  ['id-type-select', 'id-first-name', 'id-last-name', 'id-dob',
-   'id-number', 'id-expiry', 'id-photo-input'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = '';
-  });
-  const idInput = document.getElementById('id-photo-input');
-  if (idInput) idInput.disabled = true;
-  const rb = document.getElementById('review-block');
-  if (rb) rb.hidden = true;
-  const cr = document.getElementById('consent-row');
-  if (cr) cr.hidden = true;
-  const op = document.getElementById('ocr-progress');
-  if (op) op.hidden = true;
-  const thumb = document.getElementById('id-photo-thumb');
-  if (thumb) {
-    thumb.classList.remove('has-image');
-    thumb.style.backgroundImage = '';
-    thumb.parentElement?.classList.remove('has-image');
-  }
   const cc = document.getElementById('consent-check');
   if (cc) cc.checked = false;
-  const ub = document.getElementById('upload-process-btn');
-  if (ub) ub.disabled = true;
-  const us = document.getElementById('upload-status-text');
-  if (us) us.textContent = 'Select your ID type to begin.';
+  const rr = document.getElementById('trulioo-retry-row');
+  if (rr) rr.setAttribute('hidden', '');
+  const ts = document.getElementById('trulioo-status-text');
+  if (ts) ts.textContent = '';
+  ['tsim-step-1','tsim-step-2','tsim-step-3','tsim-step-4'].forEach(id=>{
+    const s=document.getElementById(id); if (s) s.classList.remove('active','done');
+  });
 
   document.getElementById('saving-section').style.display = 'block';
   document.getElementById('pass-section').style.display   = 'none';
   document.getElementById('barcode-svg').innerHTML        = '';
-  const tp = document.getElementById('trulioo-progress');
-  if (tp) tp.hidden = true;
 
   showPhase(1);
+  if (typeof runTruliooPhase === 'function') runTruliooPhase();
 });
 
 // ── CLEANUP ───────────────────────────────────────────────────────

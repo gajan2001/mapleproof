@@ -1873,3 +1873,31 @@ hr,.divider,.perforation{border-color:var(--border) !important}
   background:linear-gradient(transparent,rgba(6,5,4,.85));color:var(--brand);
   font-size:12px;font-weight:600;padding:14px 0 8px;text-align:center}
 .id-type-selector select{font-weight:500}
+
+/* ═══ v12 — TRULIOO EMBEDID VERIFICATION UI ═══ */
+.trulioo-wrap{
+  border:1px solid var(--border);border-radius:18px;
+  background:rgba(20,17,11,.6);padding:24px;margin:6px 0 20px;
+  backdrop-filter:blur(8px)}
+.trulioo-mode{
+  display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:700;
+  letter-spacing:.14em;text-transform:uppercase;color:#0c0a06;
+  background:linear-gradient(135deg,#fbe6a2,#d4a838 60%,#9c6f1c);
+  padding:6px 14px;border-radius:999px;margin-bottom:18px}
+.trulioo-mode.sim{
+  background:rgba(232,176,74,.16);color:#f0c674;
+  border:1px solid rgba(232,176,74,.4)}
+#trulioo-embedid{min-height:420px;border-radius:12px;overflow:hidden}
+.trulioo-sim{display:flex;justify-content:center}
+.trulioo-sim-card{
+  width:100%;max-width:440px;background:rgba(0,0,0,.35);
+  border:1px solid var(--border);border-radius:16px;padding:28px 26px;text-align:left}
+.trulioo-sim-logo{
+  display:flex;align-items:center;gap:12px;justify-content:center;
+  font-weight:700;font-size:17px;margin-bottom:22px;
+  background:linear-gradient(135deg,#fbe6a2,#d4a838 60%,#9c6f1c);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.trulioo-sim-logo img{filter:drop-shadow(0 4px 12px rgba(212,168,56,.3))}
+.trulioo-sim-note{
+  margin-top:20px;font-size:12px;color:var(--text-3);text-align:center;
+  border-top:1px solid var(--border);padding-top:16px}

@@ -72,105 +72,57 @@
     <section id="phase-scan" class="phase">
       <header class="phase-head">
         <h2>Verify your identity</h2>
-        <p>Choose your ID type and upload a clear photo. We read the details automatically.</p>
+        <p>Your identity &amp; document are verified securely by Trulioo. Nothing is typed by hand.</p>
       </header>
 
-      <!-- ID Type Selector — accepted Canadian documents -->
-      <div class="id-type-selector">
-        <label for="id-type-select">ID Type</label>
-        <select id="id-type-select" required>
-          <option value="">Select your ID type…</option>
-          <option value="ontario_dl">Ontario Driver's Licence (with photograph)</option>
-          <option value="passport_ca">Canadian Passport</option>
-          <option value="citizenship_card">Canadian Citizenship Card (with photo)</option>
-          <option value="caf_id">Canadian Armed Forces Identification Card</option>
-          <option value="indian_status">Secure Certificate of Indian Status (Government of Canada)</option>
-          <option value="pr_card">Permanent Resident Card (Government of Canada)</option>
-          <option value="ontario_photo_card">Ontario Photo Card (Photo Card Act)</option>
-        </select>
-      </div>
+      <div class="trulioo-wrap">
+        <div class="trulioo-mode" id="trulioo-mode-badge">Secured by Trulioo</div>
 
-      <!-- ID photo upload — primary action -->
-      <div class="id-photo-section">
-        <label class="upload-card single" for="id-photo-input" id="id-upload-label">
-          <div class="upload-thumb" id="id-photo-thumb">
-            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="6" y="10" width="36" height="28" rx="3"/>
-              <circle cx="17" cy="22" r="5"/>
-              <path d="M28 19 L38 19 M28 25 L36 25 M10 34 L20 34"/>
-            </svg>
-            <span class="upload-label">Upload a photo of your ID</span>
-            <span class="upload-hint">Clear, well-lit, all corners visible. Used only to read &amp; match — never stored.</span>
-          </div>
-          <input type="file" id="id-photo-input" accept="image/*" capture="environment" hidden disabled>
-        </label>
-      </div>
+        <!-- LIVE: the official Trulioo EmbedID widget renders here -->
+        <div id="trulioo-embedid" hidden></div>
 
-      <!-- OCR scanning progress -->
-      <div id="ocr-progress" class="trulioo-progress" hidden>
-        <div class="trulioo-step" id="ocr-step-1"><span class="trulioo-dot"></span> Checking the image is a valid ID…</div>
-        <div class="trulioo-step" id="ocr-step-2"><span class="trulioo-dot"></span> Detecting the ID photograph…</div>
-        <div class="trulioo-step" id="ocr-step-3"><span class="trulioo-dot"></span> Reading your details…</div>
-        <div class="trulioo-step" id="ocr-step-4"><span class="trulioo-dot"></span> Done ✓</div>
-      </div>
-
-      <div id="upload-status" class="scan-status">
-        <span id="upload-status-text">Select your ID type to begin.</span>
-      </div>
-
-      <!-- Review / correct extracted details (shown after a scan) -->
-      <div class="manual-id-entry" id="review-block" hidden>
-        <div class="review-banner" id="review-banner">
-          We read these details from your ID. Please check them and fix anything that's wrong.
-        </div>
-        <div class="form-row">
-          <div class="form-field">
-            <label for="id-first-name">First / Given Name</label>
-            <input type="text" id="id-first-name" maxlength="100" placeholder="As shown on ID" autocomplete="off">
-          </div>
-          <div class="form-field">
-            <label for="id-last-name">Last / Family Name</label>
-            <input type="text" id="id-last-name" maxlength="100" placeholder="As shown on ID" autocomplete="off">
+        <!-- SIMULATION: branded stand-in so the trial works end-to-end -->
+        <div id="trulioo-sim" class="trulioo-sim" hidden>
+          <div class="trulioo-sim-card">
+            <div class="trulioo-sim-logo">
+              <img src="/logo-mark.png" alt="" width="34" height="34">
+              <span>Trulioo&nbsp;Identity&nbsp;Verification</span>
+            </div>
+            <div class="trulioo-progress">
+              <div class="trulioo-step" id="tsim-step-1"><span class="trulioo-dot"></span> Connecting to the Trulioo identity network…</div>
+              <div class="trulioo-step" id="tsim-step-2"><span class="trulioo-dot"></span> Capturing &amp; verifying your document…</div>
+              <div class="trulioo-step" id="tsim-step-3"><span class="trulioo-dot"></span> Cross-checking global watchlists…</div>
+              <div class="trulioo-step" id="tsim-step-4"><span class="trulioo-dot"></span> Verification complete ✓</div>
+            </div>
+            <p class="trulioo-sim-note">Simulation mode — add your Trulioo keys to run live verification.</p>
           </div>
         </div>
-        <div class="form-row">
-          <div class="form-field">
-            <label for="id-dob">Date of Birth</label>
-            <input type="date" id="id-dob">
-          </div>
-          <div class="form-field">
-            <label for="id-number">ID / Document Number</label>
-            <input type="text" id="id-number" maxlength="40" placeholder="Document number" autocomplete="off" spellcheck="false">
-          </div>
+
+        <div id="trulioo-status" class="scan-status">
+          <span id="trulioo-status-text">Preparing secure verification…</span>
         </div>
-        <div class="form-row">
-          <div class="form-field">
-            <label for="id-expiry">Expiry Date</label>
-            <input type="date" id="id-expiry">
-          </div>
-          <div class="form-field">
-            <label for="id-country">Country of Issue</label>
-            <select id="id-country">
-              <option value="CA" selected>Canada</option>
-            </select>
-          </div>
+
+        <div id="trulioo-retry-row" class="phase-actions" hidden>
+          <button id="trulioo-retry-btn" class="btn-primary">Try again</button>
+          <button class="btn-ghost" onclick="location.href='/home'">Cancel</button>
         </div>
       </div>
 
-      <!-- Consent + privacy notice (PIPEDA requirement) -->
-      <label class="consent-row" id="consent-row" hidden>
-        <input type="checkbox" id="consent-check" required>
+      <!-- Consent (PIPEDA) — required before the pass is issued -->
+      <label class="consent-row">
+        <input type="checkbox" id="consent-check" required checked>
         <span class="consent-text">
-          I consent to Mapleproof processing my identity document for age verification.
-          I have read the <a href="/privacy" target="_blank">Privacy Policy</a> and
+          I consent to Mapleproof and Trulioo processing my identity document
+          for age verification. I have read the
+          <a href="/privacy" target="_blank">Privacy Policy</a> and
           <a href="/terms" target="_blank">Terms of Service</a>.
-          I understand my ID photo is used only to read my details and match my face,
-          is never stored, and I can delete my account anytime via <a href="/delete" target="_blank">/delete</a>.
+          My ID document is verified by Trulioo and is never stored by Mapleproof —
+          only a verified selfie is kept. I can delete my account anytime via
+          <a href="/delete" target="_blank">/delete</a>.
         </span>
       </label>
 
       <div class="phase-actions">
-        <button id="upload-process-btn" class="btn-primary" disabled>Continue to verification</button>
         <button id="back-home-btn-2" class="btn-ghost">&larr; Back</button>
       </div>
     </section>
@@ -353,7 +305,6 @@
 
   <!-- Browser-side libraries (no server cost): face matching only -->
   <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="liveness.js"></script>
   <script type="module" src="app.js"></script>
 </body>

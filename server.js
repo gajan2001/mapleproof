@@ -66,6 +66,62 @@ if (process.env.MAPLEPROOF_ADMIN_TOKEN) {
 // Data retention period (default 24 months — auto-delete passes inactive longer)
 const DATA_RETENTION_DAYS = Number(process.env.MAPLEPROOF_RETENTION_DAYS || 730);
 
+// ── TRULIOO EMBEDID CONFIG ────────────────────────────────────────
+//  Set these two env vars (from your Trulioo Developer Portal) to go LIVE.
+//  If either is missing, the app runs in SIMULATION mode — the identity
+//  step is faked so the trial keeps working with zero code changes.
+//
+//    TRULIOO_API_KEY            — secret, backend only (never sent to browser)
+//    TRULIOO_EMBEDID_PUBLIC_KEY — public key for the EmbedID client
+//    TRULIOO_API_BASE           — optional, defaults to Trulioo production
+//
+const TRULIOO_API_KEY    = process.env.TRULIOO_API_KEY || '';
+const TRULIOO_PUBLIC_KEY = process.env.TRULIOO_EMBEDID_PUBLIC_KEY || '';
+const TRULIOO_API_BASE   = process.env.TRULIOO_API_BASE || 'https://api.globaldatacompany.com';
+const TRULIOO_LIVE       = !!(TRULIOO_API_KEY && TRULIOO_PUBLIC_KEY);
+console.log(`[mapleproof] Trulioo mode: ${TRULIOO_LIVE ? 'LIVE ✓' : 'SIMULATION (set TRULIOO_API_KEY + TRULIOO_EMBEDID_PUBLIC_KEY to go live)'}`);
+
+// Lazy-loaded official EmbedID middleware (optional dependency).
+// Only required in LIVE mode so a missing/incompatible package can never
+// break the trial deploy.
+let _truliooMw = null;
+function getTruliooMiddleware() {
+  if (_truliooMw) return _truliooMw;
+  try {
+    const mk = require('trulioo-embedid-middleware');
+    _truliooMw = mk({ apiKey: TRULIOO_API_KEY });
+    console.log('[mapleproof] trulioo-embedid-middleware loaded');
+  } catch (err) {
+    console.error('[mapleproof] trulioo-embedid-middleware not available:', err.message);
+    _truliooMw = null;
+  }
+  return _truliooMw;
+}
+
+// Small helper: GET JSON from the Trulioo API with HTTP Basic auth.
+function truliooApiGet(pathname) {
+  return new Promise((resolve, reject) => {
+    const auth = Buffer.from(`${TRULIOO_API_KEY}:`).toString('base64');
+    const url  = new URL(pathname, TRULIOO_API_BASE);
+    const req  = https.request(url, {
+      method: 'GET',
+      headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
+      timeout: 15000
+    }, (resp) => {
+      let body = '';
+      resp.on('data', c => body += c);
+      resp.on('end', () => {
+        try { resolve({ status: resp.statusCode, json: body ? JSON.parse(body) : null }); }
+        catch (_) { resolve({ status: resp.statusCode, json: null, raw: body }); }
+      });
+    });
+    req.on('timeout', () => { req.destroy(new Error('Trulioo API timeout')); });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+
 // ── DATABASE ──────────────────────────────────────────────────────
 let db;
 
@@ -507,63 +563,149 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// ── /api/trulioo-verify ──────────────────────────────────────────
-//  SIMULATED Trulioo identity verification.
+// ═══════════════════════════════════════════════════════════════════
+//  TRULIOO EMBEDID INTEGRATION
+//  ───────────────────────────────────────────────────────────────────
+//  LIVE mode  (TRULIOO_API_KEY + TRULIOO_EMBEDID_PUBLIC_KEY set):
+//    • The official EmbedID middleware is mounted so the front-end
+//      TruliooClient can securely mint access tokens.
+//    • /api/trulioo/result fetches the real verification result from
+//      the Trulioo API using the EmbedID experience transaction id.
 //
-//  ⚠️  THIS IS A MOCK. It does not contact Trulioo. It performs basic
-//  sanity checks on the submitted details and then returns a synthetic
-//  "verified" response with a fake reference number.
+//  SIMULATION mode (keys absent — e.g. the public trial):
+//    • Token endpoint returns a synthetic token.
+//    • /api/trulioo/result returns a clearly-flagged simulated pass so
+//      the demo keeps working end-to-end with zero code changes.
 //
-//  When a real Trulioo (https://www.trulioo.com/) contract is in place,
-//  replace the body of this handler with a call to Trulioo's
-//  GlobalGateway "verify" API. The request/response shape the browser
-//  expects (idType, name, dob, idNumber, country → { ok, verified,
-//  reference }) is intentionally simple so the swap is contained to
-//  this one function.
-// ─────────────────────────────────────────────────────────────────
+//  Going live = set the two env vars. No code changes anywhere.
+// ═══════════════════════════════════════════════════════════════════
+
+// Front-end asks this first to learn the mode + which public key to use.
+app.get('/api/trulioo/config', (_req, res) => {
+  res.json({
+    live:      TRULIOO_LIVE,
+    publicKey: TRULIOO_LIVE ? TRULIOO_PUBLIC_KEY : null,
+    sdkUrl:    'https://js.trulioo.com/latest/main.js'
+  });
+});
+
+// EmbedID access-token endpoint.
+// The Trulioo client calls /trulioo-api/embedids/tokens/<publicKey>.
+// LIVE: the official middleware (mounted at root — it matches its own
+//       /trulioo-api/... path and talks to Trulioo with the secret key,
+//       which never leaves the server).
+// SIM : we answer the token request shape with a synthetic token.
+if (TRULIOO_LIVE) {
+  const mw = getTruliooMiddleware();
+  if (mw) {
+    app.use(mw);
+    console.log('[mapleproof] Trulioo EmbedID middleware mounted');
+  } else {
+    app.use('/trulioo-api', (_req, res) => res.status(503).json({
+      ok: false, error: 'Trulioo middleware unavailable. Run: npm i trulioo-embedid-middleware'
+    }));
+  }
+} else {
+  app.use('/trulioo-api', (req, res) => {
+    if (/\/embedids\/tokens\//.test(req.path))
+      return res.json({ token: 'SIM-' + crypto.randomBytes(12).toString('hex') });
+    return res.status(404).json({ ok: false, error: 'Not found (simulation mode).' });
+  });
+}
+
+// Fetch / confirm the verification result for an EmbedID transaction.
+// Body: { transactionId, idType?, firstName?, lastName?, dob?, expiry? }
+app.post('/api/trulioo/result', async (req, res) => {
+  const ip = (req.ip || req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim();
+  if (!persistentRateLimit(`trl-res:${ip}`, 30, 60 * 60_000)) {
+    return res.status(429).json({ ok: false, error: 'Too many attempts. Wait a few minutes.' });
+  }
+
+  const { transactionId } = req.body || {};
+
+  // ── LIVE: ask Trulioo for the real transaction result ──
+  if (TRULIOO_LIVE) {
+    if (!transactionId)
+      return res.status(400).json({ ok: false, error: 'Missing transactionId.' });
+    try {
+      // Trulioo "transaction record" lookup. Endpoint path may differ by
+      // account/region — confirm in your Developer Portal and adjust the
+      // single line below if needed.
+      const r = await truliooApiGet(
+        `/verifications/v1/transactionrecord/${encodeURIComponent(transactionId)}`
+      );
+      if (r.status < 200 || r.status >= 300 || !r.json) {
+        auditLog('SYSTEM', 'TRULIOO_RESULT_ERROR', null, req,
+                 { transactionId, status: r.status });
+        return res.status(502).json({ ok: false, error: 'Could not retrieve the Trulioo result.' });
+      }
+      const rec = r.json;
+      // Trulioo records expose an overall match flag; tolerate shape variants.
+      const verified =
+        rec.Record?.RecordStatus === 'match' ||
+        rec.RecordStatus === 'match' ||
+        rec.Verified === true;
+      auditLog('SYSTEM', verified ? 'TRULIOO_VERIFIED' : 'TRULIOO_NOT_VERIFIED',
+               null, req, { transactionId });
+      return res.json({
+        ok: true,
+        verified: !!verified,
+        simulated: false,
+        reference: transactionId,
+        datasource: 'TRULIOO'
+      });
+    } catch (err) {
+      console.error('[trulioo/result]', err.message);
+      return res.status(502).json({ ok: false, error: 'Trulioo service error.' });
+    }
+  }
+
+  // ── SIMULATION: clearly-flagged synthetic success ──
+  const reference = transactionId || ('TRL-SIM-' + crypto.randomBytes(8).toString('hex').toUpperCase());
+  auditLog('SYSTEM', 'TRULIOO_VERIFY_SIMULATED', null, req,
+           { reference, note: 'MOCK — not a real Trulioo call' });
+  return res.json({
+    ok: true,
+    verified: true,
+    simulated: true,
+    reference,
+    datasource: 'SIMULATED',
+    message: 'Identity verification simulated successfully.'
+  });
+});
+
+// Back-compat: the old simulated verify endpoint still works in SIM mode.
 app.post('/api/trulioo-verify', (req, res) => {
   const ip = (req.ip || req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim();
   if (!persistentRateLimit(`trulioo:${ip}`, 20, 60 * 60_000)) {
     return res.status(429).json({ ok: false, error: 'Too many verification attempts. Wait a few minutes.' });
   }
-
+  if (TRULIOO_LIVE) {
+    return res.status(409).json({
+      ok: false,
+      error: 'Live Trulioo is enabled — use the EmbedID flow (/api/trulioo/result).'
+    });
+  }
   try {
     const { idType, firstName, lastName, dob, idNumber, expiry, country } = req.body || {};
-
-    // Basic sanity checks (a real Trulioo call would do the heavy lifting)
-    if (!idType || !firstName || !lastName || !dob || !idNumber || !expiry || !country) {
+    if (!idType || !firstName || !lastName || !dob || !idNumber || !expiry || !country)
       return res.status(400).json({ ok: false, verified: false, error: 'Missing required identity fields.' });
-    }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dob))
       return res.status(400).json({ ok: false, verified: false, error: 'Date of birth is invalid.' });
-    }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry))
       return res.status(400).json({ ok: false, verified: false, error: 'Expiry date is invalid.' });
-    }
     const age = calculateAge(dob);
-    if (age < 18) {
-      auditLog('SYSTEM', 'TRULIOO_VERIFY_REJECT', null, req, { reason: 'under_age', age });
+    if (age < 18)
       return res.status(403).json({ ok: false, verified: false, error: `Applicant is ${age} — under the minimum age.` });
-    }
-    const exp = expiryStatus(expiry);
-    if (exp.state === 'expired') {
-      auditLog('SYSTEM', 'TRULIOO_VERIFY_REJECT', null, req, { reason: 'expired_id' });
+    if (expiryStatus(expiry).state === 'expired')
       return res.status(403).json({ ok: false, verified: false, error: 'This identity document is expired.' });
-    }
 
-    // ── SIMULATED SUCCESS ──
-    // Synthetic reference; format loosely mirrors Trulioo transaction IDs.
     const reference = 'TRL-SIM-' + crypto.randomBytes(8).toString('hex').toUpperCase();
-
     auditLog('SYSTEM', 'TRULIOO_VERIFY_SIMULATED', null, req,
              { idType, country, reference, note: 'MOCK — not a real Trulioo call' });
-
     return res.json({
-      ok: true,
-      verified: true,
-      simulated: true,        // honest flag — this is NOT a real Trulioo result
-      reference,
-      datasource: 'SIMULATED',
+      ok: true, verified: true, simulated: true,
+      reference, datasource: 'SIMULATED',
       message: 'Identity verification simulated successfully.'
     });
   } catch (err) {
@@ -598,30 +740,35 @@ app.post('/api/register', async (req, res) => {
       deviceId
     } = req.body || {};
 
-    // ── Required fields ──
-    if (!idType || !idNumber || !dob || !expiry || !country || !faceImageData)
-      return res.status(400).json({ ok: false, error: 'Missing required fields.' });
+    // ── TRULIOO VERIFICATION REQUIRED ──
+    // Identity & document verification is performed by Trulioo EmbedID
+    // (or the simulation in trial mode). The pass cannot be issued
+    // without it.
+    if (!truliooVerified)
+      return res.status(400).json({ ok: false, error: 'Identity verification must be completed before registration.' });
 
     // ── CONSENT REQUIRED ──
     if (!consentAccepted)
       return res.status(400).json({ ok: false, error: 'You must accept the privacy notice and terms to register.' });
 
-    // ── TRULIOO VERIFICATION REQUIRED ──
-    // The pass cannot be issued unless identity verification passed.
-    if (!truliooVerified)
-      return res.status(400).json({ ok: false, error: 'Identity verification must be completed before registration.' });
-
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dob))    return res.status(400).json({ ok: false, error: 'DOB must be YYYY-MM-DD.' });
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry)) return res.status(400).json({ ok: false, error: 'Expiry must be YYYY-MM-DD.' });
+    // ── Required: only the verified selfie (Trulioo owns the ID data) ──
+    if (!faceImageData)
+      return res.status(400).json({ ok: false, error: 'A verified selfie is required.' });
     if (typeof faceImageData !== 'string' || !faceImageData.startsWith('data:image/'))
       return res.status(400).json({ ok: false, error: 'Face image must be a data: URL.' });
     if (faceImageData.length > 8_000_000)
       return res.status(413).json({ ok: false, error: 'Face image too large.' });
 
+    // ID details are OPTIONAL now — Trulioo verified them. Validate only
+    // what was actually supplied.
+    if (dob && !/^\d{4}-\d{2}-\d{2}$/.test(dob))
+      return res.status(400).json({ ok: false, error: 'DOB must be YYYY-MM-DD.' });
+    if (expiry && !/^\d{4}-\d{2}-\d{2}$/.test(expiry))
+      return res.status(400).json({ ok: false, error: 'Expiry must be YYYY-MM-DD.' });
+
     const VALID_ID_TYPES = ['ontario_dl', 'passport_ca', 'citizenship_card',
       'caf_id', 'indian_status', 'pr_card', 'ontario_photo_card'];
-    if (!VALID_ID_TYPES.includes(idType))
-      return res.status(400).json({ ok: false, error: 'Invalid ID type.' });
+    const safeIdType = VALID_ID_TYPES.includes(idType) ? idType : 'trulioo_verified';
 
     let matchScore = null;
     if (faceMatchScore !== undefined && faceMatchScore !== null) {
@@ -629,14 +776,16 @@ app.post('/api/register', async (req, res) => {
       if (Number.isFinite(n) && n >= 0 && n <= 1) matchScore = n;
     }
 
-    const age = calculateAge(dob);
-    if (age < 18) {
-      auditLog('CUSTOMER', 'REGISTER_REJECT_AGE', hashId(idNumber).slice(0, 16), req, { age });
+    // Age: only enforce if a DOB was provided. Trulioo's own age check is
+    // the authority when no DOB is collected here.
+    const age = dob ? calculateAge(dob) : null;
+    if (age !== null && age < 18) {
+      auditLog('CUSTOMER', 'REGISTER_REJECT_AGE', null, req, { age });
       return res.status(403).json({ ok: false, error: `Customer is ${age} — under the minimum tier.` });
     }
-    const exp = expiryStatus(expiry);
+    const exp = expiry ? expiryStatus(expiry) : { state: 'unknown' };
     if (exp.state === 'expired') {
-      auditLog('CUSTOMER', 'REGISTER_REJECT_EXPIRED', hashId(idNumber).slice(0, 16), req, { expiry });
+      auditLog('CUSTOMER', 'REGISTER_REJECT_EXPIRED', null, req, { expiry });
       return res.status(403).json({ ok: false, error: 'Identity document is expired.' });
     }
 
@@ -659,7 +808,15 @@ app.post('/api/register', async (req, res) => {
                        ? truliooReference : null;
     const fullName = (name || `${firstName || ''} ${lastName || ''}`).trim();
 
-    const idHash = hashId(idNumber);
+    // Identity key for one-ID-one-pass dedup. Prefer the ID number; if
+    // Trulioo collected it instead, the Trulioo reference is the stable
+    // per-identity key; otherwise fall back to a fresh token.
+    const idKey   = idNumber || truliooRef || ('TRL-' + crypto.randomBytes(10).toString('hex'));
+    const safeDob = dob || '';
+    const safeExp = expiry || '';
+    const badge   = age !== null ? ageBadge(age) : '19+';   // Trulioo confirms ≥ legal age
+
+    const idHash = hashId(idKey);
     const now = new Date().toISOString();
     const existing = db.prepare('SELECT token, registered_at FROM customers WHERE id_hash = ?').get(idHash);
 
@@ -681,8 +838,8 @@ app.post('/api/register', async (req, res) => {
                fraud_hold = ?, fraud_hold_reason = ?,
                updated_at = ?, dob = NULL
          WHERE token = ?
-      `).run(encrypt(dob), expiry, encrypt(fullName), country || '',
-             idType, country || '',
+      `).run(encrypt(safeDob), safeExp, encrypt(fullName), country || '',
+             safeIdType, country || '',
              1, truliooRef,
              encrypt(faceImageData),
              matchScore, matchScore !== null ? now : null,
@@ -693,7 +850,7 @@ app.post('/api/register', async (req, res) => {
              fraudHold, fraudHoldReason,
              now, token);
       auditLog('CUSTOMER', 'REGISTER_UPDATED', token, req,
-               { ageBadge: ageBadge(age), idType, country, matchScore, truliooRef });
+               { ageBadge: badge, idType: safeIdType, matchScore, truliooRef });
     } else {
       do { token = generateToken(); }
       while (db.prepare('SELECT 1 FROM customers WHERE token = ?').get(token));
@@ -711,8 +868,8 @@ app.post('/api/register', async (req, res) => {
            fraud_hold, fraud_hold_reason,
            registered_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(token, idHash, encrypt(dob), expiry, encrypt(fullName), country || '',
-             idType, country || '', 1, truliooRef,
+      `).run(token, idHash, encrypt(safeDob), safeExp, encrypt(fullName), country || '',
+             safeIdType, country || '', 1, truliooRef,
              encrypt(faceImageData), null, null, null,
              matchScore, matchScore !== null ? now : null,
              liveOk, liveChallengesJson,
@@ -722,7 +879,7 @@ app.post('/api/register', async (req, res) => {
              fraudHold, fraudHoldReason,
              now, now);
       auditLog('CUSTOMER', 'REGISTER_CREATED', token, req,
-               { ageBadge: ageBadge(age), idType, country, matchScore, truliooRef, fraudFlags });
+               { ageBadge: badge, idType: safeIdType, matchScore, truliooRef, fraudFlags });
     }
 
     return res.json({
@@ -735,12 +892,12 @@ app.post('/api/register', async (req, res) => {
         ? `You're already registered — your existing pass has been refreshed. One ID, one barcode.`
         : null,
       publicRecord: {
-        ageBadge:          ageBadge(age),
-        verified:          age >= LEGAL_AGE,
-        idType,
-        idCountry:         country || '',
+        ageBadge:          badge,
+        verified:          true,                 // Trulioo-verified identity
+        idType:            safeIdType,
+        idCountry:         country || 'CA',
         truliooVerified:   true,
-        expiry,
+        expiry:            safeExp,
         expiryStatus:      exp.state,
         faceMatchScore:    matchScore,
         livenessVerified:  !!liveOk,

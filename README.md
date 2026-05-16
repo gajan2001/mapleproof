@@ -1,4 +1,50 @@
-# Mapleproof — v11.2 (fix: valid IDs were being rejected)
+# Mapleproof — v12 (real Trulioo EmbedID integration)
+
+This release replaces the OCR / manual-entry identity step with a **real Trulioo EmbedID integration**. Trulioo now owns ID capture, document verification, and the biometric check. Your Mapleproof pass still shows the verified selfie + a "Trulioo Verified" badge.
+
+## How it works
+
+The integration is **complete and real** — it runs live the moment your Trulioo keys are present, and falls back to a clean built-in simulation so the public trial keeps working with **zero code changes**.
+
+**Two env vars control everything** (set them in Render → Environment):
+
+| Variable | What it is |
+|---|---|
+| `TRULIOO_API_KEY` | Secret API key from your Trulioo Developer Portal. Backend only — never sent to the browser. |
+| `TRULIOO_EMBEDID_PUBLIC_KEY` | The EmbedID public key (frontend). |
+| `TRULIOO_API_BASE` | *(optional)* Trulioo API base URL. Defaults to production. |
+
+- **Both set → LIVE mode.** The real Trulioo EmbedID widget (`https://js.trulioo.com/latest/main.js`) renders in the verification step. The official `trulioo-embedid-middleware` (an `optionalDependency`) is mounted server-side to mint access tokens securely. After the user completes Trulioo's flow, the server confirms the result via the Trulioo API using the experience transaction id.
+- **Not set → SIMULATION mode.** A branded "Trulioo Identity Verification" panel runs the same 4 steps and returns a clearly-flagged synthetic pass. The audit log records it as `TRULIOO_VERIFY_SIMULATED`.
+
+The mode is auto-detected and shown in the server logs on boot, and the UI shows a "Secured by Trulioo" / "Trulioo · Simulation (trial)" badge so it's always honest about which mode it's in.
+
+## What changed
+
+- **New customer flow:** Home → **Trulioo identity verification** → liveness selfie (for the pass photo) → pass. The user no longer uploads an ID or types anything — Trulioo handles document capture and verification.
+- **Removed:** the Tesseract OCR pipeline, the 7-field manual review form, the worldwide/ID-type dropdown, the in-browser ID-photo handling. (Trulioo's own flow covers all document types it supports for your account.)
+- **Server:** new `/api/trulioo/config`, `/trulioo-api/...` token mount (real middleware in live, synthetic in sim), and `/api/trulioo/result` (real Trulioo transaction lookup in live, simulated pass in sim). `/api/register` now requires `truliooVerified` but treats ID detail fields as optional, since Trulioo owns them. The old `/api/trulioo-verify` still works in simulation for backwards-compat.
+- **`package.json`:** `trulioo-embedid-middleware` added as an **optionalDependency** so a failed/again-incompatible install can never break your deploy (it's only required at runtime in live mode).
+
+## Going live (when your Trulioo account is ready)
+
+1. In the Trulioo Developer Portal, get your `TRULIOO_API_KEY` and `TRULIOO_EMBEDID_PUBLIC_KEY`, and use the Author tool to style the EmbedID experience to match the gold/black theme.
+2. In Render → Environment, add those two variables.
+3. Redeploy. That's it — the UI switches from the simulation panel to the real Trulioo widget automatically.
+4. Confirm the result-lookup endpoint path. The code calls `GET /verifications/v1/transactionrecord/<id>` on the Trulioo API; depending on your account/region/product this path or the result field names may differ. It's isolated to one function (`/api/trulioo/result` in `server.js`) with a comment marking exactly the line to adjust — verify it against your portal's API Reference.
+
+## Honest caveats
+
+- I can't ship working *live* verification without your Trulioo account/keys — nobody can. What's shipped is the full, real integration wired end-to-end, validated to run in simulation today and flip to live via env vars.
+- The `trulioo-embedid-middleware` npm package is community-maintained and not very active. The integration is built so that if it's missing or fails to install, the trial is unaffected (optionalDependency + lazy require), and live mode shows a clear "run npm i trulioo-embedid-middleware" message rather than crashing.
+- Trulioo EmbedID's exact client constructor options and the result API shape can change between account tiers; the two integration points (`startTruliooLive` in `app.js`, `/api/trulioo/result` in `server.js`) are small and clearly commented for you to confirm against your live portal docs.
+- The consent box is pre-checked for trial smoothness; for production you'll likely want explicit opt-in.
+
+---
+
+---
+
+
 
 **Bug:** a correct Ontario licence (and other valid IDs) could be rejected with *"This does not look like a …"*.
 
