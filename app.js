@@ -382,24 +382,44 @@ function extractFields(text, idType) {
   return res;
 }
 
-// Decide whether the upload is genuinely the selected ID type.
-// Requires: a detectable face + a date + enough type keywords.
+// Decide whether the upload is plausibly a photo ID document.
+//
+// Browser OCR is unreliable on real IDs (holograms, small fonts, glare,
+// angles), so we DO NOT hard-reject based on keyword matching. We only
+// reject things that are clearly NOT a photo-ID document (a blank image,
+// a plain selfie, a screenshot of text, a random object). Keyword matches
+// only raise/lower a confidence flag — the review step lets the user fix
+// anything OCR misread.
 function validateIsId(text, idType, hasFace) {
-  const up = text.toUpperCase().replace(/[^A-Z0-9<\s]/g, ' ');
+  const up    = (text || '').toUpperCase();
+  const clean = up.replace(/[^A-Z0-9]/g, '');
+  const textLen = clean.length;
+  const hasDate = findDates(text || '').length > 0;
+
+  // Fuzzy keyword presence (tolerate OCR noise / punctuation)
   const kws = ID_TYPE_KEYWORDS[idType] || [];
   let hits = 0;
-  for (const k of kws) if (up.includes(k)) hits++;
-  const hasDate = findDates(text).length > 0;
-  const looksGov = /CANADA|ONTARIO|GOVERNMENT|GOUVERNEMENT|CANADIAN/.test(up);
-  const enoughText = up.replace(/\s/g,'').length >= 25;
+  for (const k of kws) {
+    const kk = k.replace(/[^A-Z0-9]/g, '');
+    if (kk && (up.includes(k) || clean.includes(kk))) hits++;
+  }
+  // Generic government / document hints (loose — survives OCR errors)
+  const govHint = /CAN|ONT|GOUV|GOVERN|RESID|CITIZ|FORCE|STATUS|PERMIS|LICEN|LICmanage|PASSP|CARTE|CARD|BIRTH|SEX|EXP/.test(clean);
 
-  // Must look like a photo ID at all
-  if (!hasFace)  return { ok:false, reason:'no_face' };
-  if (!enoughText && !hasDate) return { ok:false, reason:'not_a_document' };
-  // Must match the chosen type (or at least be a Canadian gov doc with a date)
-  if (hits < 1 && !(looksGov && hasDate)) return { ok:false, reason:'type_mismatch' };
-  if (!hasDate)  return { ok:false, reason:'no_date' };
-  return { ok:true, confidence: hits >= 2 && looksGov ? 'high' : 'low' };
+  // ── Hard rejections: only obvious non-documents ──
+  // Nothing at all: no face, no dates, almost no text → blank/object/garbage
+  if (!hasFace && !hasDate && textLen < 30 && !govHint)
+    return { ok:false, reason:'not_a_document' };
+  // A face but no document signals whatsoever → just a selfie
+  if (hasFace && !hasDate && textLen < 18 && !govHint)
+    return { ok:false, reason:'selfie_not_id' };
+  // No face and no document signals → not a photo ID
+  if (!hasFace && !hasDate && !govHint)
+    return { ok:false, reason:'no_face' };
+
+  // Otherwise accept. The review step handles correctness.
+  const strong = (hits >= 1) && (govHint || hasDate) && hasFace;
+  return { ok:true, confidence: strong ? 'high' : 'low' };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -504,17 +524,23 @@ document.addEventListener('DOMContentLoaded', () => {
       setStatus('Scanning your ID…');
       await new Promise(r=>setTimeout(r,300));
 
-      // Step 2 — must contain a face (it is a photo ID)
+      // Step 2 — look for the ID's face photo (used as a soft signal)
       ocrStep(1,'done'); ocrStep(2,'active');
       await loadFaceApiModels();
       let hasFace = false;
       try {
         if (faceApiReady) {
           const img = await dataUrlToImage(dataUrl);
-          const det = await faceapi.detectSingleFace(img,
-            new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.35 }));
-          hasFace = !!det;
-        } else { hasFace = true; } // models failed to load → don't hard-block
+          // ID portraits are small & stylised — try a couple of settings
+          for (const opt of [
+            { inputSize: 512, scoreThreshold: 0.25 },
+            { inputSize: 320, scoreThreshold: 0.20 }
+          ]) {
+            const det = await faceapi.detectSingleFace(img,
+              new faceapi.TinyFaceDetectorOptions(opt));
+            if (det) { hasFace = true; break; }
+          }
+        } else { hasFace = true; } // models unavailable → don't block
       } catch (_) { hasFace = true; }
 
       // Step 3 — OCR the text
@@ -533,10 +559,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!verdict.ok) {
         if (ocrProgress) ocrProgress.hidden = true;
         const msgs = {
-          no_face:        'We could not find a face photo on this image. Please upload your actual photo ID — nothing else.',
-          not_a_document: 'This does not look like an ID document. Please upload a clear photo of your ' + ID_TYPE_LABELS[idType] + '.',
-          type_mismatch:  'This does not look like a ' + ID_TYPE_LABELS[idType] + '. Check the ID type you selected, or upload the correct document.',
-          no_date:        'We could not read the dates on this ID. Please upload a sharper, well-lit photo.'
+          no_face:        'This doesn\'t look like a photo ID. Please upload a clear photo of your ' + ID_TYPE_LABELS[idType] + ' — and nothing else.',
+          not_a_document: 'We couldn\'t detect an ID document in this image. Please upload a clear, well-lit photo of your ' + ID_TYPE_LABELS[idType] + '.',
+          selfie_not_id:  'That looks like a selfie, not an ID. Please upload a photo of your ' + ID_TYPE_LABELS[idType] + ' (you\'ll take a selfie later).'
         };
         setStatus(msgs[verdict.reason] || 'This does not appear to be a valid ID. Please try again.', 'bad');
         state.idPhotoImage = '';

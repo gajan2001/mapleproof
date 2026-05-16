@@ -1,3 +1,17 @@
+# Mapleproof — v11.2 (fix: valid IDs were being rejected)
+
+**Bug:** a correct Ontario licence (and other valid IDs) could be rejected with *"This does not look like a …"*.
+
+**Cause:** the upload validator hard-rejected the ID unless browser OCR cleanly matched type keywords. Real IDs have holographic overlays, tiny security fonts, glare and angles, so Tesseract's text is often too noisy to keyword-match — even on a perfectly valid document.
+
+**Fix:** keyword matching no longer rejects anything — it only sets an internal high/low confidence flag. The upload is now accepted as long as it's plausibly a photo-ID document (has a face, **or** dates, **or** government/document text). Face detection on the ID also got more forgiving (two detection passes at lower thresholds, since ID portraits are small/stylised). The only hard rejections now are clear non-documents: a blank image/object, or an obvious plain selfie with no document text at all. The review step still asks the user to confirm/correct whatever was extracted — that remains the safety net.
+
+Net effect: valid IDs pass through to the review screen; only genuinely wrong uploads (random photo, selfie, screenshot of nothing) are refused.
+
+---
+
+---
+
 # Mapleproof — v11.1 (exact logo + OCR auto-extract + Canadian IDs)
 
 Updates on top of v11:
