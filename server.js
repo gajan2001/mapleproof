@@ -68,6 +68,18 @@ const DATA_RETENTION_DAYS = Number(process.env.MAPLEPROOF_RETENTION_DAYS || 730)
 
 // ── DATABASE ──────────────────────────────────────────────────────
 let db;
+
+// RESET_DB=1 wipes the database file before opening it. Use this once
+// when deploying a schema change onto a disk that still has an old DB
+// (Render persists ./data across deploys). Set RESET_DB=1, deploy, then
+// REMOVE the env var so you don't wipe data on every restart.
+if (process.env.RESET_DB === '1') {
+  for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`, `${DB_PATH}-journal`]) {
+    try { if (fs.existsSync(f)) { fs.unlinkSync(f); console.log('[mapleproof] RESET_DB: deleted', f); } }
+    catch (e) { console.error('[mapleproof] RESET_DB: could not delete', f, e.message); }
+  }
+}
+
 try {
   db = new Database(DB_PATH);
   db.pragma('journal_mode = WAL');
@@ -107,8 +119,6 @@ try {
       last_seen_at       TEXT,
       scan_count         INTEGER NOT NULL DEFAULT 0
     );
-    CREATE INDEX IF NOT EXISTS idx_customers_id_hash ON customers(id_hash);
-    CREATE INDEX IF NOT EXISTS idx_customers_last_seen ON customers(last_seen_at);
 
     CREATE TABLE IF NOT EXISTS scan_log (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,8 +131,6 @@ try {
       scan_city    TEXT,
       FOREIGN KEY (token) REFERENCES customers(token) ON DELETE CASCADE
     );
-    CREATE INDEX IF NOT EXISTS idx_scan_log_token ON scan_log(token);
-    CREATE INDEX IF NOT EXISTS idx_scan_log_retailer ON scan_log(retailer_id);
 
     CREATE TABLE IF NOT EXISTS retailers (
       retailer_id    TEXT PRIMARY KEY,
@@ -148,7 +156,6 @@ try {
       prev_hash    TEXT,
       hash         TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
 
     CREATE TABLE IF NOT EXISTS deletion_requests (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -225,7 +232,18 @@ try {
       console.log(`[mapleproof] migrated ${legacy.length} legacy DOB(s)`);
     }
   })();
-  
+
+  // Indexes are created AFTER column migrations so that an older database
+  // (whose tables may be missing newer columns) gets those columns added
+  // first. Creating an index on a not-yet-migrated column would crash.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_customers_id_hash   ON customers(id_hash);
+    CREATE INDEX IF NOT EXISTS idx_customers_last_seen ON customers(last_seen_at);
+    CREATE INDEX IF NOT EXISTS idx_scan_log_token      ON scan_log(token);
+    CREATE INDEX IF NOT EXISTS idx_scan_log_retailer   ON scan_log(retailer_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_ts            ON audit_log(ts);
+  `);
+
   console.log('[mapleproof] database initialized successfully');
 } catch (err) {
   console.error('[mapleproof] FATAL: Database initialization failed:', err);
