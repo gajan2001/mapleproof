@@ -135,6 +135,8 @@ const ID_TYPE_KEYWORDS = {
 const state = {
   faceImageData:  '',           // verified live selfie (from liveness)
   idPhotoImage:   '',           // unused in Trulioo flow (kept for compatibility)
+  docFront:       '',           // ID document front (sent to Trulioo, not stored by us)
+  docBack:        '',           // ID document back (optional)
   faceMatchScore: null,
   liveDescriptor: null,
   livenessChallenges: null,
@@ -280,15 +282,13 @@ async function compareFaces(selfieDataUrl, idPhotoDataUrl) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-//  TRULIOO EMBEDID — identity & document verification
+//  TRULIOO CUSTOMER API — ID DOCUMENT + SELFIE LIVENESS
 //  ─────────────────────────────────────────────────────────────────
-//  LIVE  (server has Trulioo keys): the official EmbedID widget runs
-//        here. Trulioo captures the ID document, runs its own checks
-//        and returns an experience transaction id, which we confirm
-//        server-side via /api/trulioo/result.
-//  SIM   (no keys): a branded simulated panel runs the same 4 steps so
-//        the trial works end-to-end. Flips to LIVE with zero code
-//        changes the moment the env vars are set.
+//  Flow: Phase 1 collects the ID document image(s) → Phase 2 captures a
+//  liveness selfie → both are posted to /api/trulioo/document-verify,
+//  which runs the real Trulioo Customer API (authorize → create txn →
+//  upload front/back/live → verify → result). SIM mode returns a
+//  clearly-flagged synthetic pass so the trial still works.
 // ─────────────────────────────────────────────────────────────────
 let truliooCfg = null;
 
@@ -298,146 +298,145 @@ async function loadTruliooConfig() {
     const r = await fetch('/api/trulioo/config');
     truliooCfg = await r.json();
   } catch (_) {
-    truliooCfg = { live: false, publicKey: null };
+    truliooCfg = { live: false, mode: 'simulation' };
   }
   return truliooCfg;
 }
 
-function loadScriptOnce(src) {
-  return new Promise((resolve, reject) => {
-    if (document.querySelector(`script[src="${src}"]`)) return resolve();
-    const s = document.createElement('script');
-    s.src = src; s.async = true;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error('Failed to load ' + src));
-    document.head.appendChild(s);
-  });
-}
+// Submit the collected ID document(s) + liveness selfie to Trulioo.
+// Called automatically after the liveness step succeeds.
+async function submitTruliooDocVerify() {
+  const savingSection = document.getElementById('saving-section');
+  const savingMsg     = savingSection ? savingSection.querySelector('p') : null;
+  const progress      = document.getElementById('trulioo-progress');
+  const steps = [1,2,3,4].map(n => document.getElementById('tv-step-'+n));
 
-// Confirm a Trulioo result with our server, then advance the flow.
-async function confirmTruliooResult(transactionId) {
-  const statusEl = document.getElementById('trulioo-status-text');
+  if (progress) progress.hidden = false;
+  steps.forEach(s => s && s.classList.remove('active','done'));
+  if (savingMsg) savingMsg.textContent = 'Verifying your identity with Trulioo…';
+
+  // Animate the first three steps while the request runs
+  let animating = true;
+  (async () => {
+    for (let i = 0; i < 3 && animating; i++) {
+      steps[i]?.classList.add('active');
+      await new Promise(r => setTimeout(r, 900));
+      steps[i]?.classList.remove('active');
+      steps[i]?.classList.add('done');
+    }
+  })();
+
+  let data;
   try {
-    const resp = await fetch('/api/trulioo/result', {
+    const resp = await fetch('/api/trulioo/document-verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        transactionId,
-        idType:    state.idDetails.idType    || undefined,
-        firstName: state.idDetails.firstName || undefined,
-        lastName:  state.idDetails.lastName  || undefined,
-        dob:       state.idDetails.dob       || undefined,
-        expiry:    state.idDetails.expiry    || undefined
+        idType:        state.idDetails.idType,
+        idCountry:     'CA',
+        documentFront: state.docFront,
+        documentBack:  state.docBack || undefined,
+        selfie:        state.faceImageData,
+        consent:       true,
+        isUS:          false
       })
     });
-    const data = await resp.json();
-    if (!resp.ok || !data.ok || !data.verified) {
-      if (statusEl) statusEl.textContent =
-        (data && data.error) || 'Identity verification did not pass. Please try again.';
-      document.getElementById('trulioo-retry-row')?.removeAttribute('hidden');
-      return;
-    }
-    state.truliooVerified  = true;
-    state.truliooReference = data.reference || transactionId || null;
-    state.truliooSimulated = !!data.simulated;
-    if (statusEl) statusEl.textContent = '✓ Identity verified. Continuing…';
-    setTimeout(() => { showPhase(2); }, 700);
+    data = await resp.json();
   } catch (err) {
-    if (statusEl) statusEl.textContent = 'Could not reach the verification service. Please retry.';
-    document.getElementById('trulioo-retry-row')?.removeAttribute('hidden');
+    data = { ok: false, error: 'Could not reach the verification service.' };
   }
-}
 
-// LIVE: mount the real Trulioo EmbedID client
-async function startTruliooLive(cfg) {
-  const mount   = document.getElementById('trulioo-embedid');
-  const simBox  = document.getElementById('trulioo-sim');
-  const statusEl= document.getElementById('trulioo-status-text');
-  if (simBox) simBox.hidden = true;
-  if (mount)  mount.hidden = false;
-  if (statusEl) statusEl.textContent = 'Loading secure Trulioo verification…';
-  try {
-    await loadScriptOnce(cfg.sdkUrl || 'https://js.trulioo.com/latest/main.js');
-    if (typeof TruliooClient === 'undefined')
-      throw new Error('Trulioo client unavailable');
-    if (statusEl) statusEl.textContent =
-      'Follow the Trulioo steps to verify your identity.';
-    // The client renders the experience into the page and calls
-    // handleResponse with the result + experienceTransactionId.
-    /* global TruliooClient */
-    new TruliooClient({
-      publicKey: cfg.publicKey,
-      handleResponse: (evt) => {
-        const tx = evt && (evt.experienceTransactionId ||
-                           evt.ExperienceTransactionId || evt.transactionId);
-        if (tx) {
-          if (statusEl) statusEl.textContent = 'Confirming your verification…';
-          confirmTruliooResult(tx);
-        }
-      }
-    });
-  } catch (err) {
-    if (statusEl) statusEl.textContent =
-      'Could not load Trulioo verification. Please refresh and try again.';
-    console.error('[trulioo] live init failed:', err);
+  animating = false;
+
+  if (!data.ok || !data.verified) {
+    if (progress) progress.hidden = true;
+    throw new Error(data.error ||
+      'Trulioo could not verify your identity. Please retake clear photos and try again.');
   }
-}
 
-// SIM: branded simulated EmbedID experience (no keys present)
-async function startTruliooSim() {
-  const mount  = document.getElementById('trulioo-embedid');
-  const simBox = document.getElementById('trulioo-sim');
-  const statusEl = document.getElementById('trulioo-status-text');
-  if (mount)  mount.hidden = true;
-  if (simBox) simBox.hidden = false;
-  if (statusEl) statusEl.textContent = 'Running Trulioo identity verification…';
-
-  const steps = [1,2,3,4].map(n => document.getElementById('tsim-step-'+n));
-  steps.forEach(s => s && s.classList.remove('active','done'));
-  for (let i = 0; i < 3; i++) {
-    steps[i]?.classList.add('active');
-    await new Promise(r => setTimeout(r, 850));
-    steps[i]?.classList.remove('active');
-    steps[i]?.classList.add('done');
+  steps[3]?.classList.add('active','done');
+  state.truliooVerified  = true;
+  state.truliooReference = data.reference || null;
+  state.truliooSimulated = !!data.simulated;
+  // Use any details Trulioo extracted from the document
+  if (data.person) {
+    state.idDetails.firstName = data.person.firstName || state.idDetails.firstName;
+    state.idDetails.lastName  = data.person.lastName  || state.idDetails.lastName;
+    state.idDetails.dob       = data.person.dob       || state.idDetails.dob;
+    state.idDetails.country   = data.person.country   || 'CA';
   }
-  steps[3]?.classList.add('active');
-  await confirmTruliooResult(null);   // server returns simulated success
-  steps[3]?.classList.add('done');
-}
-
-async function runTruliooPhase() {
-  const cfg = await loadTruliooConfig();
-  const badge = document.getElementById('trulioo-mode-badge');
-  if (badge) {
-    badge.textContent = cfg.live ? 'Secured by Trulioo' : 'Trulioo · Simulation (trial)';
-    badge.classList.toggle('sim', !cfg.live);
-  }
-  document.getElementById('trulioo-retry-row')?.setAttribute('hidden','');
-  if (cfg.live && cfg.publicKey) return startTruliooLive(cfg);
-  return startTruliooSim();
+  await new Promise(r => setTimeout(r, 500));
+  if (progress) progress.hidden = true;
 }
 
 // ─────────────────────────────────────────────────────────────────
-//  PHASE 1 — TRULIOO IDENTITY VERIFICATION
+//  PHASE 1 — COLLECT THE ID DOCUMENT
 // ─────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  const startBtn = document.getElementById('start-btn');
-  const backBtn2 = document.getElementById('back-home-btn-2');
-  if (startBtn) startBtn.addEventListener('click', () => { showPhase(1); runTruliooPhase(); });
+  const startBtn   = document.getElementById('start-btn');
+  const backBtn2   = document.getElementById('back-home-btn-2');
+  if (startBtn) startBtn.addEventListener('click', () => { showPhase(1); initDocPhase(); });
   if (backBtn2) backBtn2.addEventListener('click', () => showPhase(0));
-  document.getElementById('trulioo-retry-btn')?.addEventListener('click', () => runTruliooPhase());
 
-  // Re-run the Trulioo step whenever phase 1 becomes active fresh
-  const p1 = document.getElementById('phase-scan');
-  if (p1) {
-    const obs = new MutationObserver(() => {
-      if (p1.classList.contains('active') && !state.truliooVerified) {
-        const r = document.getElementById('trulioo-retry-row');
-        if (r && !r.hasAttribute('hidden')) return;
-      }
-    });
-    obs.observe(p1, { attributes: true, attributeFilter: ['class'] });
+  const idTypeSel   = document.getElementById('id-type-select');
+  const frontInput  = document.getElementById('doc-front-input');
+  const backInput   = document.getElementById('doc-back-input');
+  const frontThumb  = document.getElementById('doc-front-thumb');
+  const backThumb   = document.getElementById('doc-back-thumb');
+  const statusEl    = document.getElementById('trulioo-status-text');
+  const continueBtn = document.getElementById('doc-continue-btn');
+  const consent     = document.getElementById('consent-check');
+  const badge       = document.getElementById('trulioo-mode-badge');
+
+  async function initDocPhase() {
+    const cfg = await loadTruliooConfig();
+    if (badge) {
+      badge.textContent = cfg.live ? 'Secured by Trulioo' : 'Trulioo · Simulation (trial)';
+      badge.classList.toggle('sim', !cfg.live);
+    }
   }
+
+  function refresh() {
+    const ready = !!(idTypeSel && idTypeSel.value && state.docFront &&
+                     consent && consent.checked);
+    if (continueBtn) continueBtn.disabled = !ready;
+    if (!statusEl) return;
+    if (!idTypeSel.value)        statusEl.textContent = 'Select your ID type to begin.';
+    else if (!state.docFront)    statusEl.textContent = 'Add a clear photo of the front of your ID.';
+    else if (consent && !consent.checked) statusEl.textContent = 'Please accept the consent notice to continue.';
+    else                         statusEl.textContent = '✓ Ready. Continue to the liveness check.';
+  }
+
+  async function handleUpload(input, thumb, which) {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    if (!f.type || !f.type.startsWith('image/')) {
+      if (statusEl) statusEl.textContent = 'That is not an image. Please upload a photo of your ID only.';
+      input.value = ''; return;
+    }
+    const dataUrl = await resizeImageFile(f, 1800, 0.92);
+    if (which === 'front') state.docFront = dataUrl;
+    else                   state.docBack  = dataUrl;
+    if (thumb) {
+      thumb.classList.add('has-image');
+      thumb.style.backgroundImage = `url('${dataUrl}')`;
+      thumb.parentElement?.classList.add('has-image');
+    }
+    refresh();
+  }
+
+  idTypeSel?.addEventListener('change', refresh);
+  consent?.addEventListener('change', refresh);
+  frontInput?.addEventListener('change', () => handleUpload(frontInput, frontThumb, 'front'));
+  backInput?.addEventListener('change',  () => handleUpload(backInput,  backThumb,  'back'));
+
+  continueBtn?.addEventListener('click', () => {
+    if (!idTypeSel.value || !state.docFront) return;
+    state.idDetails.idType  = idTypeSel.value;
+    state.idDetails.country = 'CA';
+    if (statusEl) statusEl.textContent = '✓ ID received. Continuing to the liveness check…';
+    setTimeout(() => showPhase(2), 400);
+  });
 
   // Pre-load face models in the background (used by the liveness step)
   loadFaceApiModels();
@@ -536,7 +535,26 @@ async function runLivenessFlow() {
 
   stopStream(selfieStream); selfieStream = null;
   showPhase(3);
-  saveAndGeneratePass();
+
+  // Step 1 of the pass phase: Trulioo verifies the ID document against
+  // this liveness selfie. Only on success do we issue the pass.
+  (async () => {
+    const savingSection = document.getElementById('saving-section');
+    const passSection   = document.getElementById('pass-section');
+    const saveError     = document.getElementById('save-error');
+    try {
+      await submitTruliooDocVerify();      // throws if Trulioo declines
+      await saveAndGeneratePass();
+    } catch (err) {
+      console.error('[trulioo] verify failed:', err);
+      if (savingSection) savingSection.style.display = 'none';
+      if (passSection)   passSection.style.display   = 'block';
+      if (saveError) {
+        saveError.style.display = 'flex';
+        saveError.textContent   = `${err.message}`;
+      }
+    }
+  })();
 }
 
 // Wire up phase-2 buttons
@@ -920,6 +938,8 @@ document.getElementById('restart-btn').addEventListener('click', () => {
 
   state.faceImageData      = '';
   state.idPhotoImage       = '';
+  state.docFront           = '';
+  state.docBack            = '';
   state.faceMatchScore     = null;
   state.liveDescriptor     = null;
   state.livenessChallenges = null;
@@ -933,22 +953,34 @@ document.getElementById('restart-btn').addEventListener('click', () => {
     idNumber: '', expiry: '', country: 'CA'
   };
 
+  // Reset the ID-document phase UI
+  ['doc-front-input','doc-back-input','id-type-select'].forEach(id=>{
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  ['doc-front-thumb','doc-back-thumb'].forEach(id=>{
+    const t = document.getElementById(id);
+    if (t) { t.classList.remove('has-image'); t.style.backgroundImage = '';
+             t.parentElement?.classList.remove('has-image'); }
+  });
+  const cb = document.getElementById('doc-continue-btn');
+  if (cb) cb.disabled = true;
   const cc = document.getElementById('consent-check');
-  if (cc) cc.checked = false;
-  const rr = document.getElementById('trulioo-retry-row');
-  if (rr) rr.setAttribute('hidden', '');
+  if (cc) cc.checked = true;
   const ts = document.getElementById('trulioo-status-text');
-  if (ts) ts.textContent = '';
-  ['tsim-step-1','tsim-step-2','tsim-step-3','tsim-step-4'].forEach(id=>{
+  if (ts) ts.textContent = 'Select your ID type, then add a clear photo of your ID.';
+  const tp = document.getElementById('trulioo-progress');
+  if (tp) tp.hidden = true;
+  ['tv-step-1','tv-step-2','tv-step-3','tv-step-4'].forEach(id=>{
     const s=document.getElementById(id); if (s) s.classList.remove('active','done');
   });
 
   document.getElementById('saving-section').style.display = 'block';
   document.getElementById('pass-section').style.display   = 'none';
   document.getElementById('barcode-svg').innerHTML        = '';
+  const se = document.getElementById('save-error');
+  if (se) se.style.display = 'none';
 
   showPhase(1);
-  if (typeof runTruliooPhase === 'function') runTruliooPhase();
 });
 
 // ── CLEANUP ───────────────────────────────────────────────────────

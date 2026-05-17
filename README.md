@@ -1,4 +1,63 @@
-# Mapleproof — v12 (real Trulioo EmbedID integration)
+# Mapleproof — v13 (real Trulioo Customer API: ID document + selfie liveness)
+
+**This is the integration you asked for.** Trulioo verifies the person from their **actual ID document** *and* a **live selfie** — not just a face scan. It uses Trulioo's official **Customer API**, which is purpose-built for developers to do exactly this.
+
+## Yes — Trulioo has this for developers
+
+Confirmed from Trulioo's developer docs (`docs.verification.trulioo.com`): the **Customer API** creates a transaction configured for **document verification + selfie liveness**, accepts uploaded images (front/back of ID + a live selfie), runs document authenticity + iBeta-certified biometric face-match/liveness, and returns the result with the extracted person data. That's precisely "ask for the ID, then do the live check."
+
+## The flow now
+
+```
+Home
+  └─ Step 1: Verify your ID
+        • pick ID type (the 7 Canadian documents)
+        • photograph the FRONT of the ID (and BACK if applicable)
+  └─ Step 2: Liveness check (the existing active selfie check)
+  └─ Trulioo Customer API runs server-side:
+        authorize → create transaction (document + selfie) →
+        upload front/back/live → verify → poll result
+  └─ Pass issued only if Trulioo verifies the document AND the face match
+```
+
+The ID document images are sent to **Trulioo** for verification and are **never stored by Mapleproof** — only the verified selfie + the Trulioo reference are kept, exactly as before.
+
+## LIVE vs SIMULATION (one env var)
+
+| Mode | Trigger | Behaviour |
+|---|---|---|
+| **LIVE** | `TRULIOO_LICENSE_KEY` set | Real Trulioo Customer API verification end-to-end |
+| **SIMULATION** | key absent (the public trial) | Clearly-flagged synthetic pass so the demo still works |
+
+Optional env vars: `TRULIOO_API_BASE` (defaults to `https://verification.trulioo.com`), `TRULIOO_API_VERSION` (defaults to `2.4`).
+
+The mode is logged on boot and shown in the UI as a "Secured by Trulioo" / "Trulioo · Simulation (trial)" badge — always honest.
+
+## Server endpoints (all server-side; licence key never reaches the browser)
+
+- `GET  /api/trulioo/config` — tells the frontend live vs simulation
+- `POST /api/trulioo/document-verify` — receives the ID image(s) + selfie, runs the full Customer API workflow (`/authorize/customer` → `/customer/transactions` → `/customer/transactions/documents` ×N → `/customer/transactions/verify` → `GET /customer/transactions/{id}`), returns `{ verified, person, reference }`
+
+`/api/register` still requires `truliooVerified` and treats ID detail fields as optional (Trulioo owns them); the pass shows the verified selfie + "Trulioo Verified".
+
+## Going live (when your Trulioo account is ready)
+
+1. Get your **Customer API licence key** from the Trulioo Developer Portal.
+2. In Render → Environment, set `TRULIOO_LICENSE_KEY` to that value. Redeploy.
+3. That's it — the simulation is replaced by real verification automatically.
+4. Confirm two account-specific details against your portal's API Reference and adjust if needed (both are isolated and commented in `server.js`): the document-type enum values in `TRULIOO_DOC_TYPE`, and the result `status` strings treated as "verified" in `truliooVerifyDocument`. Trulioo's notice/consent (BIPA) requirement is handled via the `consent` flag and the in-app consent box; review with counsel for production.
+
+## Honest notes
+
+- No one can run *live* Trulioo without your account's licence key. What's shipped is the complete, real Customer API integration, validated to run in simulation today and flip to live with one env var.
+- Dependencies are back to just `express` + `better-sqlite3` (the API calls use Node's built-in `https`), so nothing new can break the Render build.
+- Node pin (`>=18 <24`), self-healing DB, the exact gold logo, black/gold theme, and launch gate are all unchanged from v11/v12.
+
+---
+
+---
+
+
 
 This release replaces the OCR / manual-entry identity step with a **real Trulioo EmbedID integration**. Trulioo now owns ID capture, document verification, and the biometric check. Your Mapleproof pass still shows the verified selfie + a "Trulioo Verified" badge.
 

@@ -1901,3 +1901,10 @@ hr,.divider,.perforation{border-color:var(--border) !important}
 .trulioo-sim-note{
   margin-top:20px;font-size:12px;color:var(--text-3);text-align:center;
   border-top:1px solid var(--border);padding-top:16px}
+
+/* ═══ v13 — ID DOCUMENT CAPTURE GRID ═══ */
+.id-doc-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:18px 0 4px}
+@media(max-width:560px){.id-doc-grid{grid-template-columns:1fr}}
+.id-doc-grid .upload-card{margin:0}
+.id-doc-grid .upload-label em{font-style:normal;color:var(--text-3);font-weight:400;font-size:.85em}
