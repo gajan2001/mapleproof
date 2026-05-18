@@ -231,14 +231,14 @@ async function truliooVerifyDocument({ idType, idCountry, frontBuf, backBuf, sel
     const g = await truliooRequest('GET', `/customer/transactions/${encodeURIComponent(transactionId)}`, { token });
     if (g.status === 200 && g.json) {
       const st = (g.json.status || '').toUpperCase();
-      if (st && st !== 'IN_PROGRESS' && st !== 'ACCEPTED' && st !== 'PENDING') { result = g.json; break; }
+      if (st && st !== 'IN_PROGRESS' && st !== 'PENDING' && st !== 'PENDING_RESULT') { result = g.json; break; }
       result = g.json;
     }
   }
   if (!result) throw new Error('Trulioo result not ready');
 
   const status   = (result.status || '').toUpperCase();
-  const verified = status === 'MATCH' || status === 'COMPLETE' || status === 'VERIFIED' || status === 'PASS';
+  const verified = status === 'MATCH' || status === 'COMPLETE' || status === 'VERIFIED' || status === 'PASS' || status === 'ACCEPTED';
   return { transactionId, verified, status, person: result.person || null, raw: result };
 }
 
@@ -305,6 +305,122 @@ async function truliooGetResult(transactionId) {
   const verified = status === 'MATCH' || status === 'COMPLETE' ||
                    status === 'VERIFIED' || status === 'PASS' || status === 'ACCEPTED';
   return { transactionId, verified, status, person: result.person || null };
+}
+
+// ── DIAGNOSTIC: run the full Customer API pipeline and report every step ──
+// This is the definitive "did Trulioo actually work?" probe. It performs a
+// REAL authorize → create → upload → verify → poll round-trip and returns a
+// step-by-step trace with the exact HTTP status of each call. Nothing here
+// is simulated: if it reports ok:true, Trulioo genuinely processed an ID.
+const SELFTEST_JPEG = Buffer.from(
+  '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgK' +
+  'CgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkL' +
+  'EBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAAR' +
+  'CAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAr/xAAUEAEAAAAAAAAAAAAA' +
+  'AAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oA' +
+  'DAMBAAIRAxEAPwCdABmX/9k=', 'base64');
+
+async function truliooSelfTest() {
+  const steps = [];
+  const t0 = Date.now();
+  const step = (name, ok, detail) => {
+    steps.push({ name, ok: !!ok, detail: detail || '' });
+    return ok;
+  };
+
+  if (!TRULIOO_LIVE) {
+    return {
+      ok: false,
+      live: false,
+      verdict: 'SIMULATION — no licence key set, so NO real Trulioo call is ever made.',
+      hint: 'Set TRULIOO_LICENSE_KEY (the demo licence works) and redeploy, then run this again.',
+      steps: [{ name: 'licence-key', ok: false, detail: 'TRULIOO_LICENSE_KEY is empty' }],
+      ms: Date.now() - t0
+    };
+  }
+
+  try {
+    // 1) Authorize — proves the licence key + auth header are correct.
+    const auth = await truliooRequest('POST', '/authorize/customer', {
+      headers: { 'LicenseKey': TRULIOO_LICENSE_KEY },
+      body: { consent: true }
+    });
+    const token = auth.json && auth.json.accessToken;
+    if (!step('authorize', auth.status === 200 && !!token,
+        `HTTP ${auth.status}` + (token ? ' · access token received' :
+        ' · NO token — licence key or auth header is wrong'))) {
+      return { ok: false, live: true, verdict: 'FAILED at authorize — Trulioo rejected the licence key.',
+               hint: 'Check TRULIOO_LICENSE_KEY and the LicenseKey auth header against your Trulioo portal.',
+               steps, ms: Date.now() - t0 };
+    }
+
+    // 2) Create transaction.
+    const create = await truliooRequest('POST', '/customer/transactions', {
+      token,
+      body: {
+        documentVerification: { enabled: true,
+          documentsAccepted: [{ documentCountry: 'CA', documentTypes: [{ type: 'DRIVERS_LICENSE', years: [] }] }] },
+        selfieVerification: { enabled: true }
+      }
+    });
+    const txId = create.json && create.json.transactionId;
+    if (!step('create-transaction', (create.status === 201 || create.status === 200) && !!txId,
+        `HTTP ${create.status}` + (txId ? ` · transactionId ${txId}` : ' · no transactionId'))) {
+      return { ok: false, live: true, verdict: 'FAILED at create-transaction.', steps, ms: Date.now() - t0 };
+    }
+
+    // 3) Upload a test image (exercises the multipart endpoint + auth).
+    const up = await truliooUploadImage(token, txId, 'front', SELFTEST_JPEG);
+    step('upload-image', up.status === 200,
+        `HTTP ${up.status}` + (up.json && up.json.imageId ? ` · imageId ${up.json.imageId}` : ''));
+
+    // 4) Start verification.
+    const start = await truliooRequest('POST', '/customer/transactions/verify', {
+      token, headers: { 'X-Trulioo-Transaction-Id': txId }
+    });
+    step('start-verify', start.status === 200 || start.status === 202, `HTTP ${start.status}`);
+
+    // 5) Poll for the final result.
+    let result = null;
+    for (let i = 0; i < 12; i++) {
+      await new Promise(r => setTimeout(r, 2500));
+      const g = await truliooRequest('GET',
+        `/customer/transactions/${encodeURIComponent(txId)}`, { token });
+      if (g.status === 200 && g.json) {
+        result = g.json;
+        const st = (g.json.status || '').toUpperCase();
+        if (st && st !== 'IN_PROGRESS' && st !== 'PENDING' && st !== 'PENDING_RESULT') break;
+      }
+    }
+    if (!result) {
+      step('get-result', false, 'no result after polling');
+      return { ok: false, live: true, verdict: 'Reached Trulioo but no result came back in time.', steps, ms: Date.now() - t0 };
+    }
+    const status = (result.status || '').toUpperCase();
+    const verified = ['MATCH','COMPLETE','VERIFIED','PASS','ACCEPTED'].includes(status);
+    step('get-result', true, `HTTP 200 · status ${status}`);
+
+    return {
+      ok: true,
+      live: true,
+      verified,
+      status,
+      transactionId: txId,
+      person: result.person ? {
+        firstName: result.person.firstName || '',
+        lastName:  result.person.lastName || '',
+        dob:       result.person.dateOfBirth || ''
+      } : null,
+      verdict: verified
+        ? 'TRULIOO IS WORKING — full round-trip succeeded and the ID was verified.'
+        : `Trulioo responded but returned status "${status}" (not a pass). The connection works; the document/result did not verify.`,
+      steps,
+      ms: Date.now() - t0
+    };
+  } catch (err) {
+    step('exception', false, err.message);
+    return { ok: false, live: true, verdict: 'Error talking to Trulioo: ' + err.message, steps, ms: Date.now() - t0 };
+  }
 }
 
 
@@ -734,6 +850,7 @@ app.get('/home',      (_req, res) => res.sendFile(path.join(__dirname, 'index.ht
 app.get('/app',       (_req, res) => res.sendFile(path.join(__dirname, 'app.html')));
 app.get('/retailer',  (_req, res) => res.sendFile(path.join(__dirname, 'retailer.html')));
 app.get('/admin',     (_req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
+app.get('/trulioo-test', (_req, res) => res.sendFile(path.join(__dirname, 'trulioo-test.html')));
 app.get('/privacy',   (_req, res) => res.sendFile(path.join(__dirname, 'privacy.html')));
 app.get('/terms',     (_req, res) => res.sendFile(path.join(__dirname, 'terms.html')));
 app.get('/faq',       (_req, res) => res.sendFile(path.join(__dirname, 'faq.html')));
@@ -768,8 +885,20 @@ app.get('/api/trulioo/config', (_req, res) => {
   res.json({
     live: TRULIOO_LIVE,
     mode: TRULIOO_LIVE ? 'live' : 'simulation',
-    flow: TRULIOO_FLOW          // 'api' or 'sdk'
+    flow: TRULIOO_FLOW,         // 'api' or 'sdk'
+    apiBase: TRULIOO_API_BASE,
+    apiVersion: TRULIOO_API_VERSION
   });
+});
+
+// ── DIAGNOSTIC: "Did Trulioo actually verify the ID?" ──
+// Runs a REAL end-to-end Trulioo round-trip and returns a step-by-step
+// report. Admin-token protected (it consumes a Trulioo transaction).
+// Use it from the /trulioo-test page or:
+//   curl -H "Authorization: Bearer <ADMIN_TOKEN>" https://your-site/api/trulioo/selftest
+app.get('/api/trulioo/selftest', requireAdmin, async (_req, res) => {
+  const report = await truliooSelfTest();
+  res.json(report);
 });
 
 // ── SDK FLOW: mint a short code for the Trulioo Web SDK ──

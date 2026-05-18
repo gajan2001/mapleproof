@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Trulioo Status Check · Mapleproof</title>
+<style>
+  :root{--gold:#C8A24A;--bg:#0d0d0f;--card:#16161a;--line:#2a2a30;--txt:#ECECEC;--mut:#9a9aa2;
+        --ok:#1f9d57;--okbg:#0f2a1c;--bad:#cf3b3b;--badbg:#2a1212;--warn:#d6a417;--warnbg:#2a2410;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:24px}
+  .wrap{max-width:680px;margin:0 auto}
+  h1{font-size:22px;font-weight:700;margin-bottom:4px}
+  h1 .leaf{color:var(--gold)}
+  p.sub{color:var(--mut);margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}
+  label{display:block;font-size:13px;color:var(--mut);margin-bottom:6px}
+  input{width:100%;background:#0c0c0e;border:1px solid var(--line);border-radius:9px;color:var(--txt);padding:11px 13px;font-size:14px}
+  input:focus{outline:none;border-color:var(--gold)}
+  button{width:100%;margin-top:14px;background:var(--gold);color:#1a1405;border:0;border-radius:9px;
+          padding:13px;font-size:15px;font-weight:700;cursor:pointer}
+  button:disabled{opacity:.55;cursor:not-allowed}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+  .pill{font-size:12px;padding:5px 11px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}
+  .pill b{color:var(--txt)}
+  .verdict{border-radius:12px;padding:16px;font-weight:700;font-size:16px;margin-top:6px;display:none}
+  .verdict.ok{background:var(--okbg);border:1px solid var(--ok);color:#7ce8a8}
+  .verdict.bad{background:var(--badbg);border:1px solid var(--bad);color:#ff9b9b}
+  .verdict.warn{background:var(--warnbg);border:1px solid var(--warn);color:#f3d97a}
+  .steps{margin-top:14px;display:none}
+  .step{display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-top:1px solid var(--line);font-size:14px}
+  .step:first-child{border-top:0}
+  .ic{width:20px;height:20px;border-radius:50%;flex:0 0 20px;display:grid;place-items:center;font-size:12px;font-weight:800;margin-top:1px}
+  .ic.ok{background:var(--ok);color:#04210f}
+  .ic.bad{background:var(--bad);color:#2a0606}
+  .step .nm{font-weight:600;text-transform:capitalize}
+  .step .dt{color:var(--mut);font-size:13px;word-break:break-all}
+  .meta{color:var(--mut);font-size:12px;margin-top:14px;display:none}
+  .err{color:#ff9b9b;font-size:13px;margin-top:10px;display:none}
+  a{color:var(--gold)}
+  .hint{font-weight:500;font-size:13px;margin-top:8px;opacity:.9}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span class="leaf">&#127809;</span> Trulioo Status Check</h1>
+  <p class="sub">Confirms whether Trulioo actually verified an ID — a real end-to-end round-trip, nothing simulated.</p>
+
+  <div class="card">
+    <div class="row" id="cfgRow"><span class="pill">Loading mode…</span></div>
+    <label for="tok" style="margin-top:14px">Admin token</label>
+    <input id="tok" type="password" placeholder="MAPLEPROOF_ADMIN_TOKEN" autocomplete="off">
+    <button id="run">Run Trulioo self-test</button>
+  </div>
+
+  <div class="card" id="resultCard" style="display:none">
+    <div class="verdict" id="verdict"></div>
+    <div class="hint" id="hint"></div>
+    <div class="steps" id="steps"></div>
+    <div class="meta" id="meta"></div>
+    <div class="err" id="err"></div>
+  </div>
+
+  <p class="sub" style="font-size:12px">
+    Tip: the free Trulioo
+    <a href="https://docs.verification.trulioo.com/sdk/demo-license/index.html" target="_blank" rel="noopener">demo licence</a>
+    works here — set it as <code>TRULIOO_LICENSE_KEY</code> and a pass means the full pipeline is wired correctly.
+  </p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+(async function loadCfg(){
+  try{
+    const r = await fetch('/api/trulioo/config');
+    const c = await r.json();
+    const modeOk = c.live;
+    $('cfgRow').innerHTML =
+      '<span class="pill">Mode: <b style="color:'+(modeOk?'#7ce8a8':'#f3d97a')+'">'+
+        (modeOk?'LIVE':'SIMULATION')+'</b></span>'+
+      '<span class="pill">Flow: <b>'+(c.flow||'?').toUpperCase()+'</b></span>'+
+      '<span class="pill">API: <b>'+(c.apiVersion||'?')+'</b></span>';
+  }catch(e){ $('cfgRow').innerHTML = '<span class="pill">Could not read config</span>'; }
+})();
+
+$('run').addEventListener('click', async () => {
+  const tok = $('tok').value.trim();
+  if(!tok){ $('tok').focus(); return; }
+  const btn = $('run'); btn.disabled = true; btn.textContent = 'Running full round-trip… (up to ~30s)';
+  $('resultCard').style.display='block';
+  $('verdict').style.display='none'; $('steps').style.display='none';
+  $('meta').style.display='none'; $('err').style.display='none'; $('hint').textContent='';
+
+  try{
+    const r = await fetch('/api/trulioo/selftest', { headers:{ Authorization:'Bearer '+tok } });
+    if(r.status === 401){ throw new Error('Unauthorized — wrong admin token.'); }
+    const d = await r.json();
+
+    const v = $('verdict');
+    let cls = 'bad';
+    if(d.ok && d.verified) cls = 'ok';
+    else if(d.ok && !d.verified) cls = 'warn';
+    v.className = 'verdict ' + cls;
+    v.textContent = d.verdict || (d.ok ? 'Completed' : 'Failed');
+    v.style.display='block';
+    if(d.hint){ $('hint').textContent = d.hint; }
+
+    if(Array.isArray(d.steps) && d.steps.length){
+      $('steps').innerHTML = d.steps.map(s =>
+        '<div class="step"><div class="ic '+(s.ok?'ok':'bad')+'">'+(s.ok?'\u2713':'\u2717')+'</div>'+
+        '<div><div class="nm">'+s.name.replace(/-/g,' ')+'</div>'+
+        '<div class="dt">'+(s.detail||'')+'</div></div></div>').join('');
+      $('steps').style.display='block';
+    }
+    const bits = [];
+    if(d.transactionId) bits.push('Transaction: '+d.transactionId);
+    if(d.status) bits.push('Status: '+d.status);
+    if(d.person && (d.person.firstName||d.person.lastName))
+      bits.push('Returned name: '+d.person.firstName+' '+d.person.lastName);
+    if(typeof d.ms==='number') bits.push(d.ms+' ms');
+    if(bits.length){ $('meta').textContent = bits.join('  ·  '); $('meta').style.display='block'; }
+  }catch(e){
+    $('err').textContent = e.message; $('err').style.display='block';
+    $('verdict').className='verdict bad'; $('verdict').textContent='Could not run the test.';
+    $('verdict').style.display='block';
+  }finally{
+    btn.disabled=false; btn.textContent='Run Trulioo self-test';
+  }
+});
+</script>
+</body>
+</html>

@@ -12,6 +12,34 @@ Your server mints a single-use **shortCode** (authorize → create transaction �
 
 Both flows use the same licence-key → accessToken backend and the same simulation fallback, so the public trial works in either mode without keys.
 
+## ✅ How to confirm Trulioo actually verified an ID
+
+There is now a built-in self-test that runs a **real** end-to-end Trulioo round-trip
+(authorize → create transaction → upload image → verify → poll result) and shows you,
+step by step, exactly what happened. Nothing in this test is simulated.
+
+1. Set `TRULIOO_LICENSE_KEY` (the free Trulioo **demo licence** works) and deploy.
+2. Go to **`https://your-site/trulioo-test`**.
+3. Paste your `MAPLEPROOF_ADMIN_TOKEN` and click **Run Trulioo self-test**.
+4. Read the verdict:
+   - **Green** "TRULIOO IS WORKING" → the full pipeline succeeded and the ID verified.
+   - **Amber** → Trulioo was reached but returned a non-pass status (connection is fine).
+   - **Red** → it failed; the step list shows the exact call that broke (e.g. `authorize HTTP 401` = wrong licence key/header).
+
+Three other quick signals, any time:
+- **Render boot log:** `Trulioo mode: LIVE ✓` (real) vs `SIMULATION` (fake).
+- **`GET /api/trulioo/config`** → `"live": true` when the key is set.
+- Any real verification response includes **`"simulated": false`**; a faked one is `true`.
+
+CLI equivalent of the self-test:
+`curl -H "Authorization: Bearer <ADMIN_TOKEN>" https://your-site/api/trulioo/selftest`
+
+**Bug fixed in this build:** the API flow previously did not count Trulioo's
+`ACCEPTED` status as a pass, so the demo licence (which always returns `ACCEPTED`)
+looked like a failure even though Trulioo was working. The API flow now treats
+`ACCEPTED` as verified, matching the demo licence and the SDK flow.
+
+
 ## What to set in Render.com
 
 Open your service on Render → **Environment** tab → **Add Environment Variable**, then **Save Changes** (Render redeploys automatically). The only things you ever need:
