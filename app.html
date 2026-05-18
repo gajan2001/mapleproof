@@ -72,54 +72,79 @@
     <section id="phase-scan" class="phase">
       <header class="phase-head">
         <h2>Verify your ID</h2>
-        <p>Step 1 of 2 — provide your government ID. Trulioo verifies the document and matches it to your face.</p>
+        <p>Your identity is verified by Trulioo using your government ID and a live selfie.</p>
       </header>
 
       <div class="trulioo-wrap">
         <div class="trulioo-mode" id="trulioo-mode-badge">Secured by Trulioo</div>
 
-        <div class="id-type-selector">
-          <label for="id-type-select">ID Type</label>
-          <select id="id-type-select" required>
-            <option value="">Select your ID type…</option>
-            <option value="ontario_dl">Ontario Driver's Licence (with photograph)</option>
-            <option value="passport_ca">Canadian Passport</option>
-            <option value="citizenship_card">Canadian Citizenship Card (with photo)</option>
-            <option value="caf_id">Canadian Armed Forces Identification Card</option>
-            <option value="indian_status">Secure Certificate of Indian Status (Government of Canada)</option>
-            <option value="pr_card">Permanent Resident Card (Government of Canada)</option>
-            <option value="ontario_photo_card">Ontario Photo Card (Photo Card Act)</option>
-          </select>
+        <!-- ══ API FLOW: our UI captures the ID, server sends to Trulioo ══ -->
+        <div id="flow-api">
+          <div class="id-type-selector">
+            <label for="id-type-select">ID Type</label>
+            <select id="id-type-select" required>
+              <option value="">Select your ID type…</option>
+              <option value="ontario_dl">Ontario Driver's Licence (with photograph)</option>
+              <option value="passport_ca">Canadian Passport</option>
+              <option value="citizenship_card">Canadian Citizenship Card (with photo)</option>
+              <option value="caf_id">Canadian Armed Forces Identification Card</option>
+              <option value="indian_status">Secure Certificate of Indian Status (Government of Canada)</option>
+              <option value="pr_card">Permanent Resident Card (Government of Canada)</option>
+              <option value="ontario_photo_card">Ontario Photo Card (Photo Card Act)</option>
+            </select>
+          </div>
+
+          <div class="id-doc-grid">
+            <label class="upload-card" for="doc-front-input" id="doc-front-label">
+              <div class="upload-thumb" id="doc-front-thumb">
+                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="6" y="11" width="36" height="26" rx="3"/><circle cx="17" cy="22" r="5"/>
+                  <path d="M28 19 H38 M28 25 H36 M10 32 H22"/>
+                </svg>
+                <span class="upload-label">Front of ID</span>
+                <span class="upload-hint">Clear, well-lit, all corners visible</span>
+              </div>
+              <input type="file" id="doc-front-input" accept="image/*" capture="environment" hidden>
+            </label>
+
+            <label class="upload-card" for="doc-back-input" id="doc-back-label">
+              <div class="upload-thumb" id="doc-back-thumb">
+                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="6" y="11" width="36" height="26" rx="3"/>
+                  <path d="M10 19 H38 M10 24 H38 M10 29 H30"/>
+                </svg>
+                <span class="upload-label">Back of ID <em>(if applicable)</em></span>
+                <span class="upload-hint">Driver's licence / PR card etc.</span>
+              </div>
+              <input type="file" id="doc-back-input" accept="image/*" capture="environment" hidden>
+            </label>
+          </div>
         </div>
 
-        <div class="id-doc-grid">
-          <label class="upload-card" for="doc-front-input" id="doc-front-label">
-            <div class="upload-thumb" id="doc-front-thumb">
-              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="6" y="11" width="36" height="26" rx="3"/><circle cx="17" cy="22" r="5"/>
-                <path d="M28 19 H38 M28 25 H36 M10 32 H22"/>
-              </svg>
-              <span class="upload-label">Front of ID</span>
-              <span class="upload-hint">Clear, well-lit, all corners visible</span>
-            </div>
-            <input type="file" id="doc-front-input" accept="image/*" capture="environment" hidden>
-          </label>
-
-          <label class="upload-card" for="doc-back-input" id="doc-back-label">
-            <div class="upload-thumb" id="doc-back-thumb">
-              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="6" y="11" width="36" height="26" rx="3"/>
-                <path d="M10 19 H38 M10 24 H38 M10 29 H30"/>
-              </svg>
-              <span class="upload-label">Back of ID <em>(if applicable)</em></span>
-              <span class="upload-hint">Driver's licence / PR card etc.</span>
-            </div>
-            <input type="file" id="doc-back-input" accept="image/*" capture="environment" hidden>
-          </label>
+        <!-- ══ SDK FLOW: Trulioo's official Web SDK captures everything ══ -->
+        <div id="flow-sdk" hidden>
+          <div class="id-type-selector">
+            <label for="id-type-select-sdk">ID Type</label>
+            <select id="id-type-select-sdk" required>
+              <option value="">Select your ID type…</option>
+              <option value="ontario_dl">Ontario Driver's Licence (with photograph)</option>
+              <option value="passport_ca">Canadian Passport</option>
+              <option value="citizenship_card">Canadian Citizenship Card (with photo)</option>
+              <option value="caf_id">Canadian Armed Forces Identification Card</option>
+              <option value="indian_status">Secure Certificate of Indian Status (Government of Canada)</option>
+              <option value="pr_card">Permanent Resident Card (Government of Canada)</option>
+              <option value="ontario_photo_card">Ontario Photo Card (Photo Card Act)</option>
+            </select>
+          </div>
+          <!-- Trulioo Web SDK mounts its capture UI in here -->
+          <div id="trulioo-sdk" class="trulioo-sdk-mount"></div>
+          <div class="phase-actions" id="sdk-start-row">
+            <button id="sdk-start-btn" class="btn-primary" disabled>Start Trulioo verification &rarr;</button>
+          </div>
         </div>
 
         <div id="trulioo-status" class="scan-status">
-          <span id="trulioo-status-text">Select your ID type, then add a clear photo of your ID.</span>
+          <span id="trulioo-status-text">Select your ID type to begin.</span>
         </div>
       </div>
 

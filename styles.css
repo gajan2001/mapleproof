@@ -1908,3 +1908,10 @@ hr,.divider,.perforation{border-color:var(--border) !important}
 @media(max-width:560px){.id-doc-grid{grid-template-columns:1fr}}
 .id-doc-grid .upload-card{margin:0}
 .id-doc-grid .upload-label em{font-style:normal;color:var(--text-3);font-weight:400;font-size:.85em}
+
+/* ═══ v14 — TRULIOO WEB SDK MOUNT ═══ */
+.trulioo-sdk-mount{
+  min-height:0;border-radius:14px;overflow:hidden;margin:16px 0}
+.trulioo-sdk-mount:not(:empty){
+  min-height:460px;border:1px solid var(--border);background:rgba(0,0,0,.25)}
+#flow-sdk .id-type-selector{margin-bottom:6px}

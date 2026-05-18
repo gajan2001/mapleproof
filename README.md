@@ -1,4 +1,55 @@
-# Mapleproof — v13 (real Trulioo Customer API: ID document + selfie liveness)
+# Mapleproof — v14 (switchable: Trulioo API flow OR Web SDK flow)
+
+v14 keeps everything from v13 and adds the **Trulioo Web SDK / shortCode flow** as a switchable alternative. One environment variable picks which one runs.
+
+## The two flows
+
+**API flow** (`TRULIOO_FLOW=api`, the default — this is v13's behaviour)
+Your own UI captures the ID document (front/back) and the liveness selfie, your server uploads them to the Trulioo Customer API and gets the result. You control the entire look & feel.
+
+**Web SDK flow** (`TRULIOO_FLOW=sdk`)
+Your server mints a single-use **shortCode** (authorize → create transaction → `POST /customer/handoff`). The browser loads Trulioo's official **`@trulioo/docv` Web SDK** from the CDN and hands it the shortCode; Trulioo renders its own guided document-capture + selfie/liveness experience (themed to the Mapleproof gold). When it finishes, your server confirms the result by transaction id. After Trulioo verifies, the app still captures a quick Mapleproof liveness selfie purely for the pass photo, then issues the pass.
+
+Both flows use the same licence-key → accessToken backend and the same simulation fallback, so the public trial works in either mode without keys.
+
+## What to set in Render.com
+
+Open your service on Render → **Environment** tab → **Add Environment Variable**, then **Save Changes** (Render redeploys automatically). The only things you ever need:
+
+| Variable | Required? | Value | Effect |
+|---|---|---|---|
+| `TRULIOO_LICENSE_KEY` | To go live | Your Customer API licence key from the Trulioo portal | Switches from SIMULATION to real Trulioo verification |
+| `TRULIOO_FLOW` | Optional | `api` (default) or `sdk` | Chooses the integration style above |
+| `TRULIOO_API_BASE` | Optional | defaults to `https://verification.trulioo.com` | Only if Trulioo gives you a different base URL |
+| `TRULIOO_API_VERSION` | Optional | defaults to `2.4` | API version header |
+
+Existing variables stay as they are: `MAPLEPROOF_ENCRYPTION_KEY`, `MAPLEPROOF_ADMIN_TOKEN` (and `RESET_DB=1` only if you want to wipe the database once).
+
+### Exactly what to do on Render, step by step
+
+1. Push the v14 code to your GitHub repo (replace all files, commit).
+2. In Render, your service auto-builds. (No build-command changes — still `npm install` / `node server.js`, Node pinned `>=18 <24`.)
+3. Go to **Environment** → add `TRULIOO_LICENSE_KEY` with your key. To use the SDK experience, also add `TRULIOO_FLOW` = `sdk`. Click **Save Changes**.
+4. Render redeploys. Open the logs — you'll see `Trulioo mode: LIVE ✓ · flow: API` (or `SDK`).
+5. Until you add the key it stays in SIMULATION so the trial keeps working — no broken site at any point.
+
+To test live without a contract, Trulioo's **Demo License** (docs.verification.trulioo.com/sdk/demo-license) gives a key you can drop into `TRULIOO_LICENSE_KEY` for end-to-end test responses.
+
+## Things to confirm against your Trulioo portal (isolated & commented)
+
+- `truliooVerifyDocument` / `truliooCreateShortCode` in `server.js` — the authorize header name (`LicenseKey`), document-type enum values (`TRULIOO_DOC_TYPE`), and the result `status` strings counted as "verified".
+- The Web SDK CDN pin: `@trulioo/docv/+esm` (latest). Pin a version if you prefer (`@trulioo/docv@2.8.1/+esm`).
+- BIPA/consent: handled via the consent box + `consent` flag; review with counsel for production.
+
+## Honest notes
+
+Same as before: no one can run *live* Trulioo without your account's licence key. Both flows are real and complete, validated to run in simulation today and flip to live with `TRULIOO_LICENSE_KEY`. Dependencies remain just `express` + `better-sqlite3` (the Web SDK loads from CDN in the browser; the API calls use Node's built-in HTTPS), so nothing new can break the Render build. Exact logo, black/gold theme, launch gate, self-healing DB, Node pin — all unchanged.
+
+---
+
+---
+
+
 
 **This is the integration you asked for.** Trulioo verifies the person from their **actual ID document** *and* a **live selfie** — not just a face scan. It uses Trulioo's official **Customer API**, which is purpose-built for developers to do exactly this.
 

@@ -370,37 +370,59 @@ async function submitTruliooDocVerify() {
 }
 
 // ─────────────────────────────────────────────────────────────────
-//  PHASE 1 — COLLECT THE ID DOCUMENT
+//  PHASE 1 — IDENTITY VERIFICATION (API flow OR Web SDK flow)
 // ─────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   const startBtn   = document.getElementById('start-btn');
   const backBtn2   = document.getElementById('back-home-btn-2');
-  if (startBtn) startBtn.addEventListener('click', () => { showPhase(1); initDocPhase(); });
+  if (startBtn) startBtn.addEventListener('click', () => { showPhase(1); initVerifyPhase(); });
   if (backBtn2) backBtn2.addEventListener('click', () => showPhase(0));
 
+  // Shared
+  const statusEl   = document.getElementById('trulioo-status-text');
+  const consent    = document.getElementById('consent-check');
+  const badge      = document.getElementById('trulioo-mode-badge');
+  const flowApiEl  = document.getElementById('flow-api');
+  const flowSdkEl  = document.getElementById('flow-sdk');
+
+  // API-flow elements
   const idTypeSel   = document.getElementById('id-type-select');
   const frontInput  = document.getElementById('doc-front-input');
   const backInput   = document.getElementById('doc-back-input');
   const frontThumb  = document.getElementById('doc-front-thumb');
   const backThumb   = document.getElementById('doc-back-thumb');
-  const statusEl    = document.getElementById('trulioo-status-text');
   const continueBtn = document.getElementById('doc-continue-btn');
-  const consent     = document.getElementById('consent-check');
-  const badge       = document.getElementById('trulioo-mode-badge');
 
-  async function initDocPhase() {
+  // SDK-flow elements
+  const idTypeSelSdk = document.getElementById('id-type-select-sdk');
+  const sdkStartBtn  = document.getElementById('sdk-start-btn');
+  const sdkStartRow  = document.getElementById('sdk-start-row');
+  const sdkMount     = document.getElementById('trulioo-sdk');
+
+  let activeFlow = 'api';
+
+  async function initVerifyPhase() {
     const cfg = await loadTruliooConfig();
+    activeFlow = (cfg.flow === 'sdk') ? 'sdk' : 'api';
     if (badge) {
       badge.textContent = cfg.live ? 'Secured by Trulioo' : 'Trulioo · Simulation (trial)';
       badge.classList.toggle('sim', !cfg.live);
     }
+    const sdk = activeFlow === 'sdk';
+    if (flowApiEl)  flowApiEl.hidden  = sdk;
+    if (flowSdkEl)  flowSdkEl.hidden  = !sdk;
+    if (continueBtn) continueBtn.style.display = sdk ? 'none' : '';
+    if (statusEl) statusEl.textContent = sdk
+      ? 'Select your ID type, then start Trulioo verification.'
+      : 'Select your ID type, then add a clear photo of your ID.';
   }
 
-  function refresh() {
+  // ───────── API FLOW ─────────
+  function refreshApi() {
     const ready = !!(idTypeSel && idTypeSel.value && state.docFront &&
                      consent && consent.checked);
     if (continueBtn) continueBtn.disabled = !ready;
-    if (!statusEl) return;
+    if (!statusEl || activeFlow !== 'api') return;
     if (!idTypeSel.value)        statusEl.textContent = 'Select your ID type to begin.';
     else if (!state.docFront)    statusEl.textContent = 'Add a clear photo of the front of your ID.';
     else if (consent && !consent.checked) statusEl.textContent = 'Please accept the consent notice to continue.';
@@ -422,11 +444,11 @@ document.addEventListener('DOMContentLoaded', () => {
       thumb.style.backgroundImage = `url('${dataUrl}')`;
       thumb.parentElement?.classList.add('has-image');
     }
-    refresh();
+    refreshApi();
   }
 
-  idTypeSel?.addEventListener('change', refresh);
-  consent?.addEventListener('change', refresh);
+  idTypeSel?.addEventListener('change', refreshApi);
+  consent?.addEventListener('change', () => { refreshApi(); refreshSdk(); });
   frontInput?.addEventListener('change', () => handleUpload(frontInput, frontThumb, 'front'));
   backInput?.addEventListener('change',  () => handleUpload(backInput,  backThumb,  'back'));
 
@@ -436,6 +458,136 @@ document.addEventListener('DOMContentLoaded', () => {
     state.idDetails.country = 'CA';
     if (statusEl) statusEl.textContent = '✓ ID received. Continuing to the liveness check…';
     setTimeout(() => showPhase(2), 400);
+  });
+
+  // ───────── SDK FLOW ─────────
+  function refreshSdk() {
+    const ready = !!(idTypeSelSdk && idTypeSelSdk.value && consent && consent.checked);
+    if (sdkStartBtn) sdkStartBtn.disabled = !ready;
+    if (!statusEl || activeFlow !== 'sdk') return;
+    if (!idTypeSelSdk.value) statusEl.textContent = 'Select your ID type to begin.';
+    else if (consent && !consent.checked) statusEl.textContent = 'Please accept the consent notice to continue.';
+    else statusEl.textContent = '✓ Ready. Tap “Start Trulioo verification”.';
+  }
+  idTypeSelSdk?.addEventListener('change', refreshSdk);
+
+  async function proceedAfterSdk(transactionId) {
+    if (statusEl) statusEl.textContent = 'Confirming your verification…';
+    try {
+      const r = await fetch('/api/trulioo/sdk-result', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionId })
+      });
+      const data = await r.json();
+      if (!data.ok || !data.verified) {
+        if (statusEl) statusEl.textContent =
+          (data && data.error) || 'Trulioo could not verify your identity. Please try again.';
+        if (sdkStartRow) sdkStartRow.style.display = '';
+        if (sdkStartBtn) { sdkStartBtn.disabled = false; sdkStartBtn.textContent = 'Try again'; }
+        return;
+      }
+      state.truliooVerified  = true;
+      state.truliooReference = data.reference || transactionId || null;
+      state.truliooSimulated = !!data.simulated;
+      state.idDetails.idType = idTypeSelSdk.value || state.idDetails.idType;
+      state.idDetails.country = 'CA';
+      if (data.person) {
+        state.idDetails.firstName = data.person.firstName || '';
+        state.idDetails.lastName  = data.person.lastName  || '';
+        state.idDetails.dob       = data.person.dob       || '';
+      }
+      if (statusEl) statusEl.textContent = '✓ Identity verified. Continuing to your selfie…';
+      // Still capture a Mapleproof liveness selfie for the pass photo.
+      setTimeout(() => showPhase(2), 600);
+    } catch (err) {
+      if (statusEl) statusEl.textContent = 'Could not reach the verification service. Please retry.';
+      if (sdkStartRow) sdkStartRow.style.display = '';
+    }
+  }
+
+  async function launchTruliooSdk(shortCode) {
+    // Pull the official Web SDK from the CDN (ESM).
+    const mod = await import('https://cdn.jsdelivr.net/npm/@trulioo/docv/+esm');
+    const Trulioo = mod.Trulioo || (mod.default && mod.default.Trulioo);
+    const event   = mod.event   || (mod.default && mod.default.event);
+    if (!Trulioo) throw new Error('Trulioo Web SDK failed to load');
+
+    const theme = Trulioo.workflowTheme()
+      .setLogoSource(location.origin + '/logo-mark.png')
+      .setPrimaryButtonColor('#d4a838')
+      .setPrimaryButtonTextColor('#0c0a06')
+      .build();
+
+    const workflow = Trulioo.workflow()
+      .setShortCode(shortCode)
+      .setTheme(theme);
+
+    const callbacks = new event.adapters.ListenerCallback({
+      onComplete: (success) => proceedAfterSdk(success && success.transactionId),
+      onError:    (err) => {
+        if (statusEl) statusEl.textContent =
+          'Verification error' + (err && err.code ? ` (code ${err.code})` : '') + '. Please try again.';
+        if (sdkStartRow) sdkStartRow.style.display = '';
+        if (sdkStartBtn) { sdkStartBtn.disabled = false; sdkStartBtn.textContent = 'Try again'; }
+      },
+      onException: (ex) => {
+        console.error('[trulioo sdk] exception', ex);
+        if (statusEl) statusEl.textContent = 'Unexpected error. Please try again.';
+        if (sdkStartRow) sdkStartRow.style.display = '';
+        if (sdkStartBtn) { sdkStartBtn.disabled = false; sdkStartBtn.textContent = 'Try again'; }
+      }
+    });
+    const cbOpt = Trulioo.event().setCallbacks(callbacks);
+    await Trulioo.initialize(workflow);
+    await Trulioo.launch('trulioo-sdk', cbOpt);
+  }
+
+  async function runSimSdk() {
+    // Simulation: brief progress, then synthetic success
+    if (sdkMount) {
+      sdkMount.innerHTML =
+        '<div class="trulioo-sim-card" style="margin:0 auto">' +
+        '<div class="trulioo-sim-logo"><img src="/logo-mark.png" width="34" height="34" alt="">' +
+        '<span>Trulioo Identity Verification</span></div>' +
+        '<div class="trulioo-progress">' +
+        '<div class="trulioo-step done"><span class="trulioo-dot"></span> Document captured</div>' +
+        '<div class="trulioo-step done"><span class="trulioo-dot"></span> Selfie &amp; liveness captured</div>' +
+        '<div class="trulioo-step active"><span class="trulioo-dot"></span> Verifying…</div>' +
+        '</div><p class="trulioo-sim-note">Simulation — set TRULIOO_LICENSE_KEY for live verification.</p></div>';
+    }
+    await new Promise(r => setTimeout(r, 1600));
+    proceedAfterSdk(null);
+  }
+
+  sdkStartBtn?.addEventListener('click', async () => {
+    if (!idTypeSelSdk.value || (consent && !consent.checked)) return;
+    sdkStartBtn.disabled = true;
+    sdkStartBtn.textContent = 'Starting…';
+    if (statusEl) statusEl.textContent = 'Starting secure Trulioo verification…';
+    try {
+      const resp = await fetch('/api/trulioo/shortcode', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idType: idTypeSelSdk.value, idCountry: 'CA', consent: true
+        })
+      });
+      const data = await resp.json();
+      if (!data.ok || !data.shortCode) throw new Error(data.error || 'Could not start verification.');
+
+      if (sdkStartRow) sdkStartRow.style.display = 'none';
+      if (data.simulated) {
+        await runSimSdk();
+      } else {
+        if (statusEl) statusEl.textContent = 'Follow the Trulioo steps to verify your identity.';
+        await launchTruliooSdk(data.shortCode);
+      }
+    } catch (err) {
+      console.error('[trulioo sdk] start failed:', err);
+      if (statusEl) statusEl.textContent = err.message || 'Could not start verification. Please retry.';
+      if (sdkStartRow) sdkStartRow.style.display = '';
+      sdkStartBtn.disabled = false;
+      sdkStartBtn.textContent = 'Start Trulioo verification \u2192';
+    }
   });
 
   // Pre-load face models in the background (used by the liveness step)
@@ -536,14 +688,18 @@ async function runLivenessFlow() {
   stopStream(selfieStream); selfieStream = null;
   showPhase(3);
 
-  // Step 1 of the pass phase: Trulioo verifies the ID document against
-  // this liveness selfie. Only on success do we issue the pass.
+  // Pass phase. In the API flow, Trulioo verifies the uploaded ID
+  // document against this liveness selfie now. In the SDK flow,
+  // Trulioo already verified the person in Phase 1, so we skip
+  // straight to issuing the pass.
   (async () => {
     const savingSection = document.getElementById('saving-section');
     const passSection   = document.getElementById('pass-section');
     const saveError     = document.getElementById('save-error');
     try {
-      await submitTruliooDocVerify();      // throws if Trulioo declines
+      if (!state.truliooVerified) {
+        await submitTruliooDocVerify();    // API flow — throws if declined
+      }
       await saveAndGeneratePass();
     } catch (err) {
       console.error('[trulioo] verify failed:', err);
@@ -954,7 +1110,7 @@ document.getElementById('restart-btn').addEventListener('click', () => {
   };
 
   // Reset the ID-document phase UI
-  ['doc-front-input','doc-back-input','id-type-select'].forEach(id=>{
+  ['doc-front-input','doc-back-input','id-type-select','id-type-select-sdk'].forEach(id=>{
     const el = document.getElementById(id); if (el) el.value = '';
   });
   ['doc-front-thumb','doc-back-thumb'].forEach(id=>{
@@ -964,10 +1120,16 @@ document.getElementById('restart-btn').addEventListener('click', () => {
   });
   const cb = document.getElementById('doc-continue-btn');
   if (cb) cb.disabled = true;
+  const sb = document.getElementById('sdk-start-btn');
+  if (sb) { sb.disabled = true; sb.textContent = 'Start Trulioo verification \u2192'; }
+  const sr = document.getElementById('sdk-start-row');
+  if (sr) sr.style.display = '';
+  const sm = document.getElementById('trulioo-sdk');
+  if (sm) sm.innerHTML = '';
   const cc = document.getElementById('consent-check');
   if (cc) cc.checked = true;
   const ts = document.getElementById('trulioo-status-text');
-  if (ts) ts.textContent = 'Select your ID type, then add a clear photo of your ID.';
+  if (ts) ts.textContent = 'Select your ID type to begin.';
   const tp = document.getElementById('trulioo-progress');
   if (tp) tp.hidden = true;
   ['tv-step-1','tv-step-2','tv-step-3','tv-step-4'].forEach(id=>{

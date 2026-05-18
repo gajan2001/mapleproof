@@ -86,7 +86,11 @@ const TRULIOO_LICENSE_KEY = process.env.TRULIOO_LICENSE_KEY || process.env.TRULI
 const TRULIOO_API_BASE    = process.env.TRULIOO_API_BASE || 'https://verification.trulioo.com';
 const TRULIOO_API_VERSION = process.env.TRULIOO_API_VERSION || '2.4';
 const TRULIOO_LIVE        = !!TRULIOO_LICENSE_KEY;
-console.log(`[mapleproof] Trulioo mode: ${TRULIOO_LIVE ? 'LIVE ✓ (Customer API)' : 'SIMULATION (set TRULIOO_LICENSE_KEY to go live)'}`);
+// Which integration the front-end uses:
+//   'api' (default) — our UI captures the ID + selfie, server uploads to Trulioo
+//   'sdk'           — Trulioo's official Web SDK captures everything
+const TRULIOO_FLOW        = (process.env.TRULIOO_FLOW || 'api').toLowerCase() === 'sdk' ? 'sdk' : 'api';
+console.log(`[mapleproof] Trulioo mode: ${TRULIOO_LIVE ? 'LIVE ✓' : 'SIMULATION'} · flow: ${TRULIOO_FLOW.toUpperCase()}`);
 
 // Map Mapleproof's accepted Canadian IDs → Trulioo document types.
 // Confirm exact enum values for your account in the Trulioo portal.
@@ -236,6 +240,71 @@ async function truliooVerifyDocument({ idType, idCountry, frontBuf, backBuf, sel
   const status   = (result.status || '').toUpperCase();
   const verified = status === 'MATCH' || status === 'COMPLETE' || status === 'VERIFIED' || status === 'PASS';
   return { transactionId, verified, status, person: result.person || null, raw: result };
+}
+
+// ── SDK flow: authorize → create transaction → handoff shortCode ──
+async function truliooCreateShortCode({ idType, idCountry, consent }) {
+  const auth = await truliooRequest('POST', '/authorize/customer', {
+    headers: { 'LicenseKey': TRULIOO_LICENSE_KEY },
+    body: { consent: !!consent }
+  });
+  if (auth.status !== 200 || !auth.json || !auth.json.accessToken)
+    throw new Error('Trulioo authorize failed (' + auth.status + ')');
+  const token = auth.json.accessToken;
+
+  const docType = TRULIOO_DOC_TYPE[idType] || 'IDENTIFICATION_CARD';
+  const create = await truliooRequest('POST', '/customer/transactions', {
+    token,
+    body: {
+      documentVerification: {
+        enabled: true,
+        documentsAccepted: [{
+          documentCountry: idCountry || 'CA',
+          documentTypes: [{ type: docType, years: [] }]
+        }]
+      },
+      selfieVerification: { enabled: true }
+    }
+  });
+  if ((create.status !== 201 && create.status !== 200) || !create.json || !create.json.transactionId)
+    throw new Error('Trulioo create-transaction failed (' + create.status + ')');
+  const transactionId = create.json.transactionId;
+
+  // Hand off the rest of the workflow to the Web SDK.
+  const hand = await truliooRequest('POST', '/customer/handoff', {
+    token, headers: { 'X-Trulioo-Transaction-Id': transactionId }
+  });
+  if (hand.status !== 200 || !hand.json || !hand.json.shortCode)
+    throw new Error('Trulioo handoff (shortCode) failed (' + hand.status + ')');
+  return { shortCode: hand.json.shortCode, transactionId };
+}
+
+// ── SDK flow: fetch the final transaction result by id ──
+async function truliooGetResult(transactionId) {
+  const auth = await truliooRequest('POST', '/authorize/customer', {
+    headers: { 'LicenseKey': TRULIOO_LICENSE_KEY },
+    body: { consent: true }
+  });
+  if (auth.status !== 200 || !auth.json || !auth.json.accessToken)
+    throw new Error('Trulioo authorize failed (' + auth.status + ')');
+  const token = auth.json.accessToken;
+
+  let result = null;
+  for (let i = 0; i < 10; i++) {
+    const g = await truliooRequest('GET',
+      `/customer/transactions/${encodeURIComponent(transactionId)}`, { token });
+    if (g.status === 200 && g.json) {
+      result = g.json;
+      const st = (g.json.status || '').toUpperCase();
+      if (st && st !== 'IN_PROGRESS' && st !== 'PENDING' && st !== 'PENDING_RESULT') break;
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  if (!result) throw new Error('Trulioo result not ready');
+  const status   = (result.status || '').toUpperCase();
+  const verified = status === 'MATCH' || status === 'COMPLETE' ||
+                   status === 'VERIFIED' || status === 'PASS' || status === 'ACCEPTED';
+  return { transactionId, verified, status, person: result.person || null };
 }
 
 
@@ -694,12 +763,83 @@ function requireAdmin(req, res, next) {
 //  Going live = set TRULIOO_LICENSE_KEY. No code changes anywhere.
 // ═══════════════════════════════════════════════════════════════════
 
-// Front-end asks this first to learn which mode it is in.
+// Front-end asks this first to learn which mode + flow it is in.
 app.get('/api/trulioo/config', (_req, res) => {
-  res.json({ live: TRULIOO_LIVE, mode: TRULIOO_LIVE ? 'live' : 'simulation' });
+  res.json({
+    live: TRULIOO_LIVE,
+    mode: TRULIOO_LIVE ? 'live' : 'simulation',
+    flow: TRULIOO_FLOW          // 'api' or 'sdk'
+  });
 });
 
-// Main verification endpoint. Body (JSON):
+// ── SDK FLOW: mint a short code for the Trulioo Web SDK ──
+// Body: { idType, idCountry, consent }
+app.post('/api/trulioo/shortcode', async (req, res) => {
+  const ip = (req.ip || req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim();
+  if (!persistentRateLimit(`trl-sc:${ip}`, 15, 60 * 60_000))
+    return res.status(429).json({ ok: false, error: 'Too many attempts. Wait a few minutes.' });
+
+  const { idType, idCountry, consent } = req.body || {};
+  if (!consent)
+    return res.status(400).json({ ok: false, error: 'Consent is required.' });
+
+  if (TRULIOO_LIVE) {
+    try {
+      const out = await truliooCreateShortCode({ idType, idCountry: idCountry || 'CA', consent: true });
+      auditLog('SYSTEM', 'TRULIOO_SHORTCODE', null, req, { transactionId: out.transactionId });
+      return res.json({ ok: true, shortCode: out.shortCode, transactionId: out.transactionId, simulated: false });
+    } catch (err) {
+      console.error('[trulioo/shortcode]', err.message);
+      return res.status(502).json({ ok: false, error: 'Could not start Trulioo verification.' });
+    }
+  }
+  // Simulation: synthetic short code (the front-end sim panel handles it)
+  const sc = 'SIM' + crypto.randomBytes(8).toString('hex');
+  return res.json({ ok: true, shortCode: sc, transactionId: sc, simulated: true });
+});
+
+// ── SDK FLOW: confirm the result after the SDK completes ──
+// Body: { transactionId }
+app.post('/api/trulioo/sdk-result', async (req, res) => {
+  const ip = (req.ip || req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim();
+  if (!persistentRateLimit(`trl-sr:${ip}`, 20, 60 * 60_000))
+    return res.status(429).json({ ok: false, error: 'Too many attempts. Wait a few minutes.' });
+
+  const { transactionId } = req.body || {};
+
+  if (TRULIOO_LIVE) {
+    if (!transactionId)
+      return res.status(400).json({ ok: false, error: 'Missing transactionId.' });
+    try {
+      const out = await truliooGetResult(transactionId);
+      auditLog('SYSTEM', out.verified ? 'TRULIOO_VERIFIED' : 'TRULIOO_NOT_VERIFIED',
+               null, req, { transactionId, status: out.status });
+      const p = out.person || {};
+      return res.json({
+        ok: true, verified: out.verified, simulated: false,
+        reference: transactionId, status: out.status,
+        person: {
+          firstName: p.firstName || '', lastName: p.lastName || '',
+          dob: p.dateOfBirth || '', country: (p.location && p.location.country) || 'CA'
+        },
+        error: out.verified ? undefined :
+          'Trulioo could not verify this identity. Please try again with a clear document and selfie.'
+      });
+    } catch (err) {
+      console.error('[trulioo/sdk-result]', err.message);
+      return res.status(502).json({ ok: false, error: 'Could not retrieve the Trulioo result.' });
+    }
+  }
+  // Simulation
+  const reference = transactionId || ('TRL-SIM-' + crypto.randomBytes(8).toString('hex').toUpperCase());
+  auditLog('SYSTEM', 'TRULIOO_VERIFY_SIMULATED', null, req, { reference, note: 'MOCK' });
+  return res.json({
+    ok: true, verified: true, simulated: true, reference,
+    person: { firstName: '', lastName: '', dob: '', country: 'CA' }
+  });
+});
+
+// Main verification endpoint (API FLOW). Body (JSON):
 //   { idType, idCountry, documentFront (dataURL), documentBack? (dataURL),
 //     selfie (dataURL), consent (bool), isUS (bool) }
 app.post('/api/trulioo/document-verify', async (req, res) => {
